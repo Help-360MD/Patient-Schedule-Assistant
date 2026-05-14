@@ -457,12 +457,20 @@ body::before {
   margin-top: 14px;
 }
 
+.add-on-filter-row {
+  margin-top: 12px;
+}
+
 .dos-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-top: 16px;
+}
+
+.add-on-status {
+  margin-top: 14px;
 }
 
 .count-card,

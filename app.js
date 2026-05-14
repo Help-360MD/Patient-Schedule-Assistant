@@ -2,6 +2,9 @@ const REQUIRED_REPORT_NAME = "report name scheduled patients list";
 const STORAGE_KEY = "help360md.patientScheduleAssistant.v1";
 const DOS_ALL_FILTER = "__all_dos__";
 const DOS_EMPTY_LABEL = "No DOS Provided";
+const ADD_ON_FILTER_ALL = "__all_appointments__";
+const ADD_ON_FILTER_ONLY = "__add_ons_only__";
+const ADD_ON_FILTER_REGULAR = "__non_add_ons__";
 const OUTPUT_COLUMNS = [
   "patientid",
   "patient name",
@@ -350,6 +353,25 @@ function buildDosCounts(rows) {
   });
 }
 
+function makeAppointmentComparisonKey(row) {
+  return makeDeduplicationKey(row, row.__dos);
+}
+
+function buildAddOnInsight(rows, comparisonBase = null) {
+  const addOnRows = rows.filter((row) => row.__isAddOn);
+  const comparisonRows = Array.isArray(comparisonBase?.cleanedRows) ? comparisonBase.cleanedRows : [];
+
+  return {
+    available: Array.isArray(comparisonBase?.cleanedRows),
+    baselineFileName: comparisonBase?.fileName || "",
+    baselineSavedAt: comparisonBase?.savedAt || "",
+    baselineCount: comparisonRows.length,
+    addOnCount: addOnRows.length,
+    regularCount: Math.max(0, rows.length - addOnRows.length),
+    addOnDosCounts: buildDosCounts(addOnRows),
+  };
+}
+
 function looksCancelled(value) {
   const normalizedValue = normalizeHeader(value);
   return normalizedValue.includes("cancel");
@@ -372,7 +394,7 @@ function sumMatchingCounts(counts, matchers) {
   }, 0);
 }
 
-function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts) {
+function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight) {
   return {
     totalAppointments: cleanedRows.length,
     newPatientCount: sumMatchingCounts(appointmentCounts, [/\bnew patient\b/, /\bnp\b/]),
@@ -384,6 +406,7 @@ function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts
       /\bep\b/,
     ]),
     wellnessExamCount: sumMatchingCounts(appointmentCounts, [/\bwellness\b/, /\bawv\b/]),
+    addOnCount: addOnInsight.addOnCount,
     appointmentTypeCount: appointmentCounts.length,
     dosCount: dosCounts.length,
     insurancePlanCount: insuranceCounts.length,
@@ -398,6 +421,7 @@ function normalizeProcessedSnapshot(snapshot) {
   const normalizedRows = snapshot.cleanedRows.map((row) => ({
     ...row,
     __dos: normalizeDosValue(row.__dos),
+    __isAddOn: Boolean(row.__isAddOn),
   }));
   const appointmentCounts = Array.isArray(snapshot.appointmentCounts)
     ? snapshot.appointmentCounts
@@ -408,6 +432,16 @@ function normalizeProcessedSnapshot(snapshot) {
   const dosCounts = Array.isArray(snapshot.dosCounts)
     ? snapshot.dosCounts
     : buildDosCounts(normalizedRows);
+  const derivedAddOnInsight = buildAddOnInsight(normalizedRows, snapshot.addOnInsight);
+  const addOnInsight = snapshot.addOnInsight && typeof snapshot.addOnInsight === "object"
+    ? {
+      ...derivedAddOnInsight,
+      available: Boolean(snapshot.addOnInsight.available) || derivedAddOnInsight.available,
+      baselineFileName: normalizeDisplay(snapshot.addOnInsight.baselineFileName) || derivedAddOnInsight.baselineFileName,
+      baselineSavedAt: snapshot.addOnInsight.baselineSavedAt || derivedAddOnInsight.baselineSavedAt,
+      baselineCount: Number(snapshot.addOnInsight.baselineCount) || derivedAddOnInsight.baselineCount,
+    }
+    : derivedAddOnInsight;
 
   return {
     ...snapshot,
@@ -419,7 +453,8 @@ function normalizeProcessedSnapshot(snapshot) {
     appointmentCounts,
     insuranceCounts,
     dosCounts,
-    summary: buildSummary(normalizedRows, appointmentCounts, insuranceCounts, dosCounts),
+    addOnInsight,
+    summary: buildSummary(normalizedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight),
   };
 }
 
@@ -472,6 +507,7 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
 
     const dosValue = normalizeDisplay(sourceRow[dosIndex]);
     cleanedRow.__dos = normalizeDosValue(dosValue);
+    cleanedRow.__isAddOn = false;
     const dedupeKey = makeDeduplicationKey(cleanedRow, dosValue);
 
     if (dedupeKey && seenKeys.has(dedupeKey)) {
@@ -489,6 +525,7 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
   const appointmentCounts = buildCounts(sortedRows, "appttype");
   const insuranceCounts = buildCounts(sortedRows, "appt ins pkg name");
   const dosCounts = buildDosCounts(sortedRows);
+  const addOnInsight = buildAddOnInsight(sortedRows);
 
   return {
     fileName,
@@ -500,7 +537,50 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
     appointmentCounts,
     insuranceCounts,
     dosCounts,
-    summary: buildSummary(sortedRows, appointmentCounts, insuranceCounts, dosCounts),
+    addOnInsight,
+    summary: buildSummary(sortedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight),
+  };
+}
+
+function applyAddOnComparison(processedData, comparisonBase = null) {
+  const hasComparisonBase = Array.isArray(comparisonBase?.cleanedRows);
+  const comparisonKeys = new Set(
+    hasComparisonBase
+      ? comparisonBase.cleanedRows.map((row) => makeAppointmentComparisonKey({
+        ...row,
+        __dos: normalizeDosValue(row.__dos),
+      })).filter(Boolean)
+      : [],
+  );
+
+  const comparedRows = processedData.cleanedRows.map((row) => {
+    if (!hasComparisonBase) {
+      return {
+        ...row,
+        __isAddOn: false,
+      };
+    }
+
+    const comparisonKey = makeAppointmentComparisonKey(row);
+    return {
+      ...row,
+      __isAddOn: comparisonKey ? !comparisonKeys.has(comparisonKey) : false,
+    };
+  });
+
+  const addOnInsight = buildAddOnInsight(comparedRows, comparisonBase);
+
+  return {
+    ...processedData,
+    cleanedRows: comparedRows,
+    addOnInsight,
+    summary: buildSummary(
+      comparedRows,
+      processedData.appointmentCounts,
+      processedData.insuranceCounts,
+      processedData.dosCounts,
+      addOnInsight,
+    ),
   };
 }
 
@@ -611,12 +691,68 @@ function renderDosFilters(container, dosCounts, selectedDos) {
     .join("");
 }
 
+function renderAddOnFilters(container, addOnInsight, selectedAddOnFilter) {
+  if (!addOnInsight.available) {
+    container.innerHTML = '<div class="empty-state-card">Process a later version of this sheet to compare and find add-ons since the last upload.</div>';
+    return;
+  }
+
+  const filters = [
+    {
+      value: ADD_ON_FILTER_ALL,
+      label: "All Appointments",
+      count: addOnInsight.addOnCount + addOnInsight.regularCount,
+    },
+    {
+      value: ADD_ON_FILTER_ONLY,
+      label: "New Add-Ons",
+      count: addOnInsight.addOnCount,
+    },
+    {
+      value: ADD_ON_FILTER_REGULAR,
+      label: "Previously Seen",
+      count: addOnInsight.regularCount,
+    },
+  ];
+
+  container.innerHTML = filters
+    .map(
+      (item) => `
+        <button
+          class="dos-filter-button${selectedAddOnFilter === item.value ? " is-active" : ""}"
+          type="button"
+          data-add-on-filter="${escapeHtml(item.value)}"
+        >
+          ${escapeHtml(item.label)}
+          <span class="dos-filter-meta">(${item.count})</span>
+        </button>
+      `,
+    )
+    .join("");
+}
+
 function filterRowsByDos(rows, selectedDos) {
   if (!selectedDos || selectedDos === DOS_ALL_FILTER) {
     return rows;
   }
 
   return rows.filter((row) => normalizeDosValue(row.__dos) === selectedDos);
+}
+
+function filterRowsByAddOn(rows, selectedAddOnFilter) {
+  if (!selectedAddOnFilter || selectedAddOnFilter === ADD_ON_FILTER_ALL) {
+    return rows;
+  }
+
+  if (selectedAddOnFilter === ADD_ON_FILTER_ONLY) {
+    return rows.filter((row) => row.__isAddOn);
+  }
+
+  if (selectedAddOnFilter === ADD_ON_FILTER_REGULAR) {
+    return rows.filter((row) => !row.__isAddOn);
+  }
+
+  return rows;
 }
 
 function renderTable(body, rows, emptyMessage = "No patient rows were found after processing this file.") {
@@ -640,6 +776,7 @@ function renderTable(body, rows, emptyMessage = "No patient rows were found afte
                   <div class="patient-cell">
                     <span>${escapeHtml(row[columnName] ?? "")}</span>
                     <span class="dos-badge">DOS: ${escapeHtml(normalizeDosValue(row.__dos))}</span>
+                    ${row.__isAddOn ? `<span class="dos-badge">New Since Last Upload</span>` : ""}
                   </div>
                 </td>
               `;
@@ -658,11 +795,47 @@ function setStatus(statusElement, message, tone = "info") {
   statusElement.className = `status-banner status-${tone}`;
 }
 
+function renderAddOnStatus(statusElement, processedData) {
+  const { addOnInsight, cleanedRows } = processedData;
+
+  if (!addOnInsight.available) {
+    setStatus(
+      statusElement,
+      "This is your first saved upload in the comparison cycle. Upload the same DOS sheet again later and the tool will flag newly added patients as add-ons.",
+      "info",
+    );
+    return;
+  }
+
+  const tone = addOnInsight.addOnCount > 0 ? "success" : "info";
+  const baselineTime = formatTimestamp(addOnInsight.baselineSavedAt);
+  setStatus(
+    statusElement,
+    `${addOnInsight.addOnCount} add-ons found by comparing this upload against ${addOnInsight.baselineFileName || "the last saved upload"}${baselineTime ? ` from ${baselineTime}` : ""}. ${cleanedRows.length} current appointments were checked against ${addOnInsight.baselineCount} appointments in that earlier upload.`,
+    tone,
+  );
+}
+
+function renderAddOnDosCounts(container, processedData) {
+  if (!processedData.addOnInsight.available) {
+    container.innerHTML = '<div class="empty-state-card">Add-on counts by DOS will appear here after a later upload is compared.</div>';
+    return;
+  }
+
+  if (!processedData.addOnInsight.addOnDosCounts.length) {
+    container.innerHTML = '<div class="empty-state-card">No new add-ons were found in this upload.</div>';
+    return;
+  }
+
+  renderCounts(container, processedData.addOnInsight.addOnDosCounts);
+}
+
 function updateOverview(summaryElements, processedData) {
   summaryElements.totalAppointments.textContent = String(processedData.summary.totalAppointments);
   summaryElements.duplicatesRemoved.textContent = String(processedData.duplicatesRemoved);
   summaryElements.cancelledRemoved.textContent = String(processedData.cancelledRemoved);
   summaryElements.selfPayRemoved.textContent = String(processedData.selfPayRemoved);
+  summaryElements.addOnCount.textContent = String(processedData.summary.addOnCount);
   summaryElements.newPatientCount.textContent = String(processedData.summary.newPatientCount);
   summaryElements.establishedPatientCount.textContent = String(processedData.summary.establishedPatientCount);
   summaryElements.wellnessExamCount.textContent = String(processedData.summary.wellnessExamCount);
@@ -714,7 +887,10 @@ function initApp() {
     statusMessage: document.querySelector("#statusMessage"),
     memoryBadge: document.querySelector("#memoryBadge"),
     dosFilters: document.querySelector("#dosFilters"),
+    addOnStatus: document.querySelector("#addOnStatus"),
+    addOnFilters: document.querySelector("#addOnFilters"),
     dosCounts: document.querySelector("#dosCounts"),
+    addOnDosCounts: document.querySelector("#addOnDosCounts"),
     dosSelectionSummary: document.querySelector("#dosSelectionSummary"),
     appointmentCounts: document.querySelector("#appointmentCounts"),
     insuranceCounts: document.querySelector("#insuranceCounts"),
@@ -729,6 +905,7 @@ function initApp() {
     duplicatesRemoved: document.querySelector("#duplicatesRemoved"),
     cancelledRemoved: document.querySelector("#cancelledRemoved"),
     selfPayRemoved: document.querySelector("#selfPayRemoved"),
+    addOnCount: document.querySelector("#addOnCount"),
     newPatientCount: document.querySelector("#newPatientCount"),
     establishedPatientCount: document.querySelector("#establishedPatientCount"),
     wellnessExamCount: document.querySelector("#wellnessExamCount"),
@@ -741,12 +918,27 @@ function initApp() {
     selectedFile: null,
     processedData: null,
     selectedDos: DOS_ALL_FILTER,
+    selectedAddOnFilter: ADD_ON_FILTER_ALL,
   };
+
+  function getCurrentVisibleRows() {
+    if (!state.processedData) {
+      return [];
+    }
+
+    return filterRowsByAddOn(
+      filterRowsByDos(state.processedData.cleanedRows, state.selectedDos),
+      state.selectedAddOnFilter,
+    );
+  }
 
   function syncButtons() {
     elements.processButton.disabled = !state.selectedFile;
     elements.downloadButton.disabled = !state.processedData;
-    elements.downloadDosButton.disabled = !state.processedData || state.selectedDos === DOS_ALL_FILTER;
+    elements.downloadDosButton.disabled =
+      !state.processedData ||
+      state.selectedDos === DOS_ALL_FILTER ||
+      getCurrentVisibleRows().length === 0;
     elements.clearMemoryButton.disabled = !loadState();
   }
 
@@ -759,9 +951,18 @@ function initApp() {
   function updateDosDownloadButton() {
     const hasSpecificDos = Boolean(state.processedData) && state.selectedDos !== DOS_ALL_FILTER;
     elements.downloadDosButton.disabled = !hasSpecificDos;
-    elements.downloadDosButton.textContent = hasSpecificDos
-      ? `Download ${state.selectedDos} CSV`
-      : "Download Selected DOS";
+    if (!hasSpecificDos) {
+      elements.downloadDosButton.textContent = "Download Selected DOS";
+      return;
+    }
+
+    const suffix =
+      state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
+        ? " New Add-Ons"
+        : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
+          ? " Previously Seen"
+          : "";
+    elements.downloadDosButton.textContent = `Download ${state.selectedDos}${suffix}`;
   }
 
   function renderFilteredTableView() {
@@ -773,27 +974,39 @@ function initApp() {
       return;
     }
 
-    const filteredRows = filterRowsByDos(state.processedData.cleanedRows, state.selectedDos);
+    const filteredRows = getCurrentVisibleRows();
     renderTable(
       elements.resultsBody,
       filteredRows,
       state.selectedDos === DOS_ALL_FILTER
-        ? "No patient rows were found after processing this file."
-        : `No patient rows match DOS ${state.selectedDos}.`,
+        ? state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
+          ? "No new add-ons were found after comparing this upload."
+          : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
+            ? "No previously seen appointments were found after comparing this upload."
+            : "No patient rows were found after processing this file."
+        : `No patient rows match the current filters for DOS ${state.selectedDos}.`,
     );
 
     const dosSummary =
       state.selectedDos === DOS_ALL_FILTER
         ? `Showing all ${state.processedData.summary.dosCount} DOS values.`
         : `Showing patients for DOS ${state.selectedDos}.`;
+    const addOnSummary =
+      state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
+        ? "Add-on filter: New appointments only."
+        : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
+          ? "Add-on filter: Previously seen appointments only."
+          : "Add-on filter: All appointments.";
 
     elements.tableSummary.textContent =
-      `${filteredRows.length} appointments visible from ${state.processedData.cleanedRows.length} cleaned appointments. Removed ${state.processedData.duplicatesRemoved} duplicates, ${state.processedData.cancelledRemoved} cancelled appointments, and ${state.processedData.selfPayRemoved} self-pay placeholders. ${dosSummary}`;
+      `${filteredRows.length} appointments visible from ${state.processedData.cleanedRows.length} cleaned appointments. Removed ${state.processedData.duplicatesRemoved} duplicates, ${state.processedData.cancelledRemoved} cancelled appointments, and ${state.processedData.selfPayRemoved} self-pay placeholders. ${dosSummary} ${addOnSummary}`;
 
     elements.dosSelectionSummary.textContent =
-      state.selectedDos === DOS_ALL_FILTER
+      !state.processedData.addOnInsight.available
         ? `Select a DOS filter to download only that date. ${state.processedData.summary.dosCount} unique DOS values are available.`
-        : `${filteredRows.length} appointments are currently visible for DOS ${state.selectedDos}.`;
+        : state.selectedDos === DOS_ALL_FILTER
+          ? `${state.processedData.addOnInsight.addOnCount} add-ons were found across ${state.processedData.summary.dosCount} DOS values. Select a DOS to download that date.`
+          : `${filteredRows.length} appointments are currently visible for DOS ${state.selectedDos}.`;
 
     updateDosDownloadButton();
     syncButtons();
@@ -806,9 +1019,15 @@ function initApp() {
       normalizedData.dosCounts.some((item) => item.label === state.selectedDos)
       ? state.selectedDos
       : DOS_ALL_FILTER;
+    state.selectedAddOnFilter = options.keepSelectedAddOn && normalizedData.addOnInsight.available
+      ? state.selectedAddOnFilter
+      : ADD_ON_FILTER_ALL;
 
     renderDosFilters(elements.dosFilters, normalizedData.dosCounts, state.selectedDos);
+    renderAddOnStatus(elements.addOnStatus, normalizedData);
+    renderAddOnFilters(elements.addOnFilters, normalizedData.addOnInsight, state.selectedAddOnFilter);
     renderCounts(elements.dosCounts, normalizedData.dosCounts);
+    renderAddOnDosCounts(elements.addOnDosCounts, normalizedData);
     renderCounts(elements.appointmentCounts, normalizedData.appointmentCounts);
     renderCounts(elements.insuranceCounts, normalizedData.insuranceCounts);
     updateOverview(summaryElements, normalizedData);
@@ -859,6 +1078,17 @@ function initApp() {
     renderFilteredTableView();
   });
 
+  elements.addOnFilters.addEventListener("click", (event) => {
+    const filterButton = event.target.closest("[data-add-on-filter]");
+    if (!filterButton || !state.processedData || !state.processedData.addOnInsight.available) {
+      return;
+    }
+
+    state.selectedAddOnFilter = filterButton.getAttribute("data-add-on-filter") || ADD_ON_FILTER_ALL;
+    renderAddOnFilters(elements.addOnFilters, state.processedData.addOnInsight, state.selectedAddOnFilter);
+    renderFilteredTableView();
+  });
+
   elements.processButton.addEventListener("click", async () => {
     if (!state.selectedFile) {
       setStatus(elements.statusMessage, "Please choose a CSV file before processing.", "error");
@@ -868,7 +1098,11 @@ function initApp() {
     try {
       setStatus(elements.statusMessage, "Processing your CSV now...", "info");
       const fileText = await readFileText(state.selectedFile);
-      const processedData = processScheduleCsv(fileText, state.selectedFile.name);
+      const comparisonBase = loadState();
+      const processedData = applyAddOnComparison(
+        processScheduleCsv(fileText, state.selectedFile.name),
+        comparisonBase,
+      );
       const snapshot = {
         ...processedData,
         savedAt: new Date().toISOString(),
@@ -890,7 +1124,7 @@ function initApp() {
 
       setStatus(
         elements.statusMessage,
-        `Success. ${processedData.cleanedRows.length} appointments are ready after removing ${processedData.duplicatesRemoved} duplicates, ${processedData.cancelledRemoved} cancelled rows, and ${processedData.selfPayRemoved} self-pay placeholders.`,
+        `Success. ${processedData.cleanedRows.length} appointments are ready after removing ${processedData.duplicatesRemoved} duplicates, ${processedData.cancelledRemoved} cancelled rows, and ${processedData.selfPayRemoved} self-pay placeholders.${processedData.addOnInsight.available ? ` ${processedData.addOnInsight.addOnCount} add-ons were found compared with the last saved upload.` : " This upload is now saved as your comparison baseline for the next sheet."}`,
         "success",
       );
       syncButtons();
@@ -921,14 +1155,20 @@ function initApp() {
       return;
     }
 
-    const selectedRows = filterRowsByDos(state.processedData.cleanedRows, state.selectedDos);
+    const selectedRows = getCurrentVisibleRows();
     if (!selectedRows.length) {
-      setStatus(elements.statusMessage, `No appointments are available for DOS ${state.selectedDos}.`, "error");
+      setStatus(elements.statusMessage, `No appointments are available for the current DOS and add-on filters.`, "error");
       return;
     }
 
-    downloadRowsCsv(selectedRows, state.processedData.fileName, `dos-${state.selectedDos}`);
-    setStatus(elements.statusMessage, `Your CSV download for DOS ${state.selectedDos} has started.`, "success");
+    const suffix =
+      state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
+        ? `dos-${state.selectedDos}-add-ons`
+        : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
+          ? `dos-${state.selectedDos}-previously-seen`
+          : `dos-${state.selectedDos}`;
+    downloadRowsCsv(selectedRows, state.processedData.fileName, suffix);
+    setStatus(elements.statusMessage, `Your CSV download for the current DOS view has started.`, "success");
   });
 
   elements.clearMemoryButton.addEventListener("click", () => {
@@ -963,11 +1203,17 @@ if (typeof document !== "undefined") {
 }
 
 globalThis.PatientScheduleAssistant = {
+  ADD_ON_FILTER_ALL,
+  ADD_ON_FILTER_ONLY,
+  ADD_ON_FILTER_REGULAR,
   DOS_ALL_FILTER,
   DOS_EMPTY_LABEL,
   OUTPUT_COLUMNS,
+  applyAddOnComparison,
   buildCounts,
+  buildAddOnInsight,
   buildDosCounts,
+  filterRowsByAddOn,
   filterRowsByDos,
   isSelfPayPlaceholder,
   normalizeHeader,

@@ -96,6 +96,10 @@
             <strong id="selfPayRemoved" class="stat-value">0</strong>
           </article>
           <article class="stat-card">
+            <span class="stat-label">Add-Ons Since Last Upload</span>
+            <strong id="addOnCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
             <span class="stat-label">New Patient</span>
             <strong id="newPatientCount" class="stat-value">0</strong>
           </article>
@@ -129,11 +133,17 @@
             <h2>View by DOS</h2>
           </div>
           <p class="section-copy">
-            Filter the table by appointment date so you can quickly see which patients are coming on each DOS.
+            Filter the table by appointment date and add-on status so you can quickly see which patients were added after the last upload.
           </p>
         </div>
         <div id="dosFilters" class="dos-filter-row">
           <div class="empty-state-card">Process a file to filter patients by DOS.</div>
+        </div>
+        <div id="addOnStatus" class="status-banner status-info">
+          Process a file to compare against the last saved upload.
+        </div>
+        <div id="addOnFilters" class="dos-filter-row add-on-filter-row">
+          <div class="empty-state-card">Process a file to filter add-ons since the last upload.</div>
         </div>
         <div class="dos-actions">
           <p id="dosSelectionSummary" class="section-copy">
@@ -142,6 +152,9 @@
           <button id="downloadDosButton" class="button button-secondary" type="button" disabled>
             Download Selected DOS
           </button>
+        </div>
+        <div id="addOnDosCounts" class="count-grid compact-count-grid">
+          <div class="empty-state-card">Process a file to see add-on counts by DOS.</div>
         </div>
         <div id="dosCounts" class="count-grid compact-count-grid">
           <div class="empty-state-card">Process a file to see appointment counts by DOS.</div>
