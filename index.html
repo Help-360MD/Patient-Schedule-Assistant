@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patient Schedule Assistant | Help360MD</title>
+  <meta
+    name="description"
+    content="Upload an Athena Health scheduled patients CSV, clean it, review counts, and download a polished export."
+  >
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero panel">
+      <div class="brand-cluster">
+        <img class="brand-logo" src="help360md-logo.png" alt="Help360MD logo">
+        <div class="brand-copy">
+          <p class="brand-subtitle">Powered by Help360MD</p>
+          <h1>Patient Schedule Assistant</h1>
+          <p class="hero-text">
+            Upload an Athena Health scheduled patients list, clean duplicate same-day entries,
+            automatically remove cancelled appointments, review every appointment and insurance count,
+            and download a ready-to-use CSV.
+          </p>
+        </div>
+      </div>
+      <div class="hero-meta">
+        <span id="memoryBadge" class="memory-badge hidden">Saved memory restored</span>
+        <p class="privacy-note">All processing stays in your browser.</p>
+      </div>
+    </header>
+
+    <main class="content-grid">
+      <section class="panel controls-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Workflow</p>
+            <h2>Upload and Process</h2>
+          </div>
+          <p class="section-copy">
+            Athena CSV files should begin with <strong>REPORT NAME : Scheduled Patients List</strong>
+            in cell A1, with headers on row 2.
+          </p>
+        </div>
+
+        <div class="controls-row">
+          <label id="uploadButton" class="button button-upload" for="csvFileInput" tabindex="0" role="button">
+            Upload CSV
+          </label>
+          <input id="csvFileInput" class="visually-hidden-input" type="file" accept=".csv,text/csv">
+          <button id="processButton" class="button button-primary" type="button" disabled>Process</button>
+          <button id="downloadButton" class="button button-secondary" type="button" disabled>Download CSV</button>
+        </div>
+
+        <div class="support-row">
+          <div id="fileMeta" class="file-meta">No file selected yet.</div>
+          <button id="clearMemoryButton" class="link-button" type="button" disabled>Clear saved memory</button>
+        </div>
+
+        <div id="statusMessage" class="status-banner status-info" role="status" aria-live="polite">
+          Choose a CSV file to get started.
+        </div>
+      </section>
+
+      <section class="panel overview-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Highlights</p>
+            <h2>Quick Counts</h2>
+          </div>
+          <p class="section-copy">High-visibility numbers pulled from the cleaned schedule.</p>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span class="stat-label">Cleaned Appointments</span>
+            <strong id="totalAppointments" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Duplicates Removed</span>
+            <strong id="duplicatesRemoved" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Cancelled Removed</span>
+            <strong id="cancelledRemoved" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">New Patient</span>
+            <strong id="newPatientCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Established Patient</span>
+            <strong id="establishedPatientCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Wellness Exam</span>
+            <strong id="wellnessExamCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Appointment Types</span>
+            <strong id="appointmentTypeCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Insurance Plans</span>
+            <strong id="insurancePlanCount" class="stat-value">0</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel counts-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Breakdown</p>
+            <h2>Appointment Type Counts</h2>
+          </div>
+          <p class="section-copy">
+            Every appointment type found after cleaning the file. Different appointment labels are kept and counted exactly as they appear.
+          </p>
+        </div>
+        <div id="appointmentCounts" class="count-grid">
+          <div class="empty-state-card">Process a file to see appointment type counts.</div>
+        </div>
+      </section>
+
+      <section class="panel counts-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Breakdown</p>
+            <h2>Insurance Counts</h2>
+          </div>
+          <p class="section-copy">Every insurance package name found in the cleaned schedule.</p>
+        </div>
+        <div id="insuranceCounts" class="count-grid">
+          <div class="empty-state-card">Process a file to see insurance counts.</div>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Results</p>
+            <h2>Cleaned Schedule</h2>
+          </div>
+          <p id="tableSummary" class="section-copy">No processed data yet.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">patientid</th>
+                <th scope="col">patient name</th>
+                <th scope="col">appt ins pkg name</th>
+                <th scope="col">appt policyidnumber</th>
+                <th scope="col">patientdob</th>
+                <th scope="col">appttype</th>
+                <th scope="col">svc dprtmnt</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr class="empty-row">
+                <td colspan="7">Upload and process a CSV to view the cleaned patient schedule.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script defer src="app.js"></script>
+</body>
+</html>
