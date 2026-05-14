@@ -1,20 +1,21 @@
 :root {
-  --bg: #f5efe5;
-  --bg-soft: #fffaf3;
-  --panel: rgba(255, 250, 242, 0.9);
-  --panel-strong: rgba(255, 255, 255, 0.96);
-  --panel-border: rgba(188, 146, 84, 0.18);
-  --panel-glow: rgba(198, 165, 109, 0.2);
-  --text: #2f2618;
-  --text-soft: #6f5d46;
+  --bg: #f6f0e5;
+  --bg-soft: #fffdfa;
+  --panel: rgba(255, 252, 247, 0.92);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --panel-border: rgba(188, 146, 84, 0.16);
+  --panel-glow: rgba(198, 165, 109, 0.18);
+  --text: #2b2419;
+  --text-soft: #6b5a45;
   --accent: #c6a56d;
-  --accent-strong: #a87c40;
+  --accent-strong: #b48846;
   --accent-deep: #74552c;
   --accent-soft: #efe0bf;
+  --surface-tint: #faf4ea;
   --success: #1e7c4e;
   --danger: #b85045;
   --info: #7d6137;
-  --shadow: 0 24px 60px rgba(122, 88, 38, 0.12);
+  --shadow: 0 22px 54px rgba(122, 88, 38, 0.1);
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
@@ -34,9 +35,9 @@ body {
   font-family: "Aptos", "Segoe UI Variable Display", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(198, 165, 109, 0.24), transparent 22%),
-    radial-gradient(circle at 88% 10%, rgba(255, 255, 255, 0.95), transparent 22%),
-    linear-gradient(180deg, #fdf8f1 0%, #f5efe5 48%, #efe2cb 100%);
+    radial-gradient(circle at top left, rgba(198, 165, 109, 0.2), transparent 24%),
+    radial-gradient(circle at 88% 10%, rgba(255, 255, 255, 0.96), transparent 20%),
+    linear-gradient(180deg, #ffffff 0%, #fbf6ee 34%, #f2e8d7 100%);
 }
 
 body::before {
@@ -75,7 +76,7 @@ body::before {
   overflow: hidden;
   background:
     radial-gradient(circle at top right, rgba(198, 165, 109, 0.18), transparent 28%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(248, 239, 224, 0.88));
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(247, 238, 222, 0.92));
 }
 
 .hero::after {
@@ -123,6 +124,14 @@ body::before {
   letter-spacing: 0.18em;
   font-size: 0.74rem;
   font-weight: 700;
+}
+
+.brand-tagline {
+  margin: 0 0 12px;
+  color: var(--accent-strong);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .hero-text,
@@ -192,11 +201,36 @@ body::before {
   margin-top: 18px;
 }
 
+.hero-signals {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 360px;
+}
+
+.hero-signal {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 124, 64, 0.16);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--accent-deep);
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(122, 88, 38, 0.08);
+}
+
 .controls-panel,
 .overview-panel,
 .counts-panel,
 .table-panel {
   padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 244, 234, 0.92)),
+    var(--panel);
 }
 
 .section-heading {
@@ -213,6 +247,13 @@ body::before {
 
 .section-copy {
   max-width: 520px;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: flex-end;
 }
 
 .controls-row {
@@ -302,6 +343,35 @@ body::before {
   padding: 0;
 }
 
+.toggle-button {
+  appearance: none;
+  border: 1px solid rgba(168, 124, 64, 0.2);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--accent-deep);
+  border-radius: 999px;
+  min-height: 42px;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.toggle-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(122, 88, 38, 0.1);
+}
+
+.toggle-button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+}
+
 .status-banner {
   margin-top: 18px;
   padding: 14px 16px;
@@ -383,6 +453,18 @@ body::before {
   gap: 12px;
 }
 
+.compact-count-grid {
+  margin-top: 14px;
+}
+
+.dos-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .count-card,
 .empty-state-card {
   min-height: 112px;
@@ -413,13 +495,81 @@ body::before {
   place-items: center;
   color: var(--text-soft);
   text-align: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(250, 244, 234, 0.86)),
+    var(--surface-tint);
+}
+
+.dos-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dos-filter-button {
+  appearance: none;
+  border: 1px solid rgba(168, 124, 64, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(122, 88, 38, 0.08);
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.dos-filter-button:hover {
+  transform: translateY(-1px);
+}
+
+.dos-filter-button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+}
+
+.dos-filter-button.is-active {
+  background: linear-gradient(135deg, var(--accent-strong), var(--accent-deep));
+  border-color: transparent;
+  color: #fff9ef;
+  box-shadow: 0 12px 24px rgba(122, 88, 38, 0.16);
+}
+
+.dos-filter-meta {
+  color: inherit;
+  opacity: 0.82;
+}
+
+.patient-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dos-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(239, 224, 191, 0.58);
+  color: var(--accent-deep);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .table-wrap {
   overflow: auto;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(168, 124, 64, 0.12);
-  background: rgba(255, 255, 255, 0.76);
+  background: rgba(255, 255, 255, 0.84);
 }
 
 table {
@@ -466,7 +616,9 @@ tbody tr:nth-child(even) td {
 
   .hero,
   .section-heading,
-  .support-row {
+  .support-row,
+  .section-actions,
+  .dos-actions {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -480,7 +632,12 @@ tbody tr:nth-child(even) td {
     align-items: flex-start;
   }
 
+  .hero-signals {
+    justify-content: flex-start;
+  }
+
   .controls-row,
+  .toggle-button,
   .button {
     width: 100%;
   }

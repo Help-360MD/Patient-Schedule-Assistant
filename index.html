@@ -17,16 +17,22 @@
         <img class="brand-logo" src="help360md-logo.png" alt="Help360MD logo">
         <div class="brand-copy">
           <p class="brand-subtitle">Powered by Help360MD</p>
+          <p class="brand-tagline">Empowering Healthcare, Maximizing Revenue</p>
           <h1>Patient Schedule Assistant</h1>
           <p class="hero-text">
             Upload an Athena Health scheduled patients list, clean duplicate same-day entries,
-            automatically remove cancelled appointments, review every appointment and insurance count,
+            automatically remove cancelled appointments and empty self-pay placeholders, review every appointment and insurance count,
             and download a ready-to-use CSV.
           </p>
         </div>
       </div>
       <div class="hero-meta">
         <span id="memoryBadge" class="memory-badge hidden">Saved memory restored</span>
+        <div class="hero-signals" aria-hidden="true">
+          <span class="hero-signal">Scheduling/Rescheduling</span>
+          <span class="hero-signal">Reporting</span>
+          <span class="hero-signal">Benefits Verification</span>
+        </div>
         <p class="privacy-note">All processing stays in your browser.</p>
       </div>
     </header>
@@ -50,7 +56,7 @@
           </label>
           <input id="csvFileInput" class="visually-hidden-input" type="file" accept=".csv,text/csv">
           <button id="processButton" class="button button-primary" type="button" disabled>Process</button>
-          <button id="downloadButton" class="button button-secondary" type="button" disabled>Download CSV</button>
+          <button id="downloadButton" class="button button-secondary" type="button" disabled>Download All CSV</button>
         </div>
 
         <div class="support-row">
@@ -86,6 +92,10 @@
             <strong id="cancelledRemoved" class="stat-value">0</strong>
           </article>
           <article class="stat-card">
+            <span class="stat-label">Self Pay Removed</span>
+            <strong id="selfPayRemoved" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
             <span class="stat-label">New Patient</span>
             <strong id="newPatientCount" class="stat-value">0</strong>
           </article>
@@ -102,9 +112,39 @@
             <strong id="appointmentTypeCount" class="stat-value">0</strong>
           </article>
           <article class="stat-card">
+            <span class="stat-label">Schedule Dates</span>
+            <strong id="dosCount" class="stat-value">0</strong>
+          </article>
+          <article class="stat-card">
             <span class="stat-label">Insurance Plans</span>
             <strong id="insurancePlanCount" class="stat-value">0</strong>
           </article>
+        </div>
+      </section>
+
+      <section class="panel counts-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Scheduling</p>
+            <h2>View by DOS</h2>
+          </div>
+          <p class="section-copy">
+            Filter the table by appointment date so you can quickly see which patients are coming on each DOS.
+          </p>
+        </div>
+        <div id="dosFilters" class="dos-filter-row">
+          <div class="empty-state-card">Process a file to filter patients by DOS.</div>
+        </div>
+        <div class="dos-actions">
+          <p id="dosSelectionSummary" class="section-copy">
+            Select a DOS filter to review that day and download only that DOS.
+          </p>
+          <button id="downloadDosButton" class="button button-secondary" type="button" disabled>
+            Download Selected DOS
+          </button>
+        </div>
+        <div id="dosCounts" class="count-grid compact-count-grid">
+          <div class="empty-state-card">Process a file to see appointment counts by DOS.</div>
         </div>
       </section>
 
@@ -129,10 +169,23 @@
             <p class="eyebrow">Breakdown</p>
             <h2>Insurance Counts</h2>
           </div>
-          <p class="section-copy">Every insurance package name found in the cleaned schedule.</p>
+          <div class="section-actions">
+            <p class="section-copy">Every insurance package name found in the cleaned schedule.</p>
+            <button
+              id="insuranceToggleButton"
+              class="toggle-button"
+              type="button"
+              aria-expanded="true"
+              aria-controls="insuranceCountsWrap"
+            >
+              Hide
+            </button>
+          </div>
         </div>
-        <div id="insuranceCounts" class="count-grid">
-          <div class="empty-state-card">Process a file to see insurance counts.</div>
+        <div id="insuranceCountsWrap">
+          <div id="insuranceCounts" class="count-grid">
+            <div class="empty-state-card">Process a file to see insurance counts.</div>
+          </div>
         </div>
       </section>
 

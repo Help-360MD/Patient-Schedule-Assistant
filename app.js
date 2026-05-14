@@ -1,5 +1,7 @@
 const REQUIRED_REPORT_NAME = "report name scheduled patients list";
 const STORAGE_KEY = "help360md.patientScheduleAssistant.v1";
+const DOS_ALL_FILTER = "__all_dos__";
+const DOS_EMPTY_LABEL = "No DOS Provided";
 const OUTPUT_COLUMNS = [
   "patientid",
   "patient name",
@@ -78,6 +80,10 @@ function normalizeHeader(value) {
 
 function normalizeDisplay(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeDosValue(value) {
+  return normalizeDisplay(value) || DOS_EMPTY_LABEL;
 }
 
 function escapeHtml(value) {
@@ -271,6 +277,32 @@ function sortRowsByPatientName(rows) {
   });
 }
 
+function parseDosTimestamp(value) {
+  const label = normalizeDisplay(value);
+  if (!label || label === DOS_EMPTY_LABEL) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const slashDateMatch = label.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+.*)?$/);
+  if (slashDateMatch) {
+    const month = Number(slashDateMatch[1]);
+    const day = Number(slashDateMatch[2]);
+    const year = Number(slashDateMatch[3].length === 2 ? `20${slashDateMatch[3]}` : slashDateMatch[3]);
+    return new Date(year, month - 1, day).getTime();
+  }
+
+  const isoDateMatch = label.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+.*)?$/);
+  if (isoDateMatch) {
+    const year = Number(isoDateMatch[1]);
+    const month = Number(isoDateMatch[2]);
+    const day = Number(isoDateMatch[3]);
+    return new Date(year, month - 1, day).getTime();
+  }
+
+  const parsedTimestamp = Date.parse(label);
+  return Number.isNaN(parsedTimestamp) ? Number.POSITIVE_INFINITY : parsedTimestamp;
+}
+
 function buildCounts(rows, columnName) {
   const counts = new Map();
 
@@ -291,9 +323,45 @@ function buildCounts(rows, columnName) {
   );
 }
 
+function buildDosCounts(rows) {
+  const counts = new Map();
+
+  for (const row of rows) {
+    const label = normalizeDosValue(row.__dos);
+    const normalizedKey = label.toLowerCase();
+    const existing = counts.get(normalizedKey);
+
+    if (existing) {
+      existing.count += 1;
+    } else {
+      counts.set(normalizedKey, { label, count: 1 });
+    }
+  }
+
+  return [...counts.values()].sort((left, right) => {
+    const leftTime = parseDosTimestamp(left.label);
+    const rightTime = parseDosTimestamp(right.label);
+
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+
+    return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+  });
+}
+
 function looksCancelled(value) {
   const normalizedValue = normalizeHeader(value);
   return normalizedValue.includes("cancel");
+}
+
+function isSelfPayPlaceholder(row) {
+  const insuranceLabel = normalizeHeader(row["appt ins pkg name"]);
+  const missingPatientId = !normalizeDisplay(row.patientid);
+  const missingPatientName = !normalizeDisplay(row["patient name"]);
+  const missingPolicyId = !normalizeDisplay(row["appt policyidnumber"]);
+
+  return insuranceLabel.includes("self pay") && missingPatientId && missingPatientName && missingPolicyId;
 }
 
 function sumMatchingCounts(counts, matchers) {
@@ -304,7 +372,7 @@ function sumMatchingCounts(counts, matchers) {
   }, 0);
 }
 
-function buildSummary(cleanedRows, appointmentCounts, insuranceCounts) {
+function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts) {
   return {
     totalAppointments: cleanedRows.length,
     newPatientCount: sumMatchingCounts(appointmentCounts, [/\bnew patient\b/, /\bnp\b/]),
@@ -317,6 +385,7 @@ function buildSummary(cleanedRows, appointmentCounts, insuranceCounts) {
     ]),
     wellnessExamCount: sumMatchingCounts(appointmentCounts, [/\bwellness\b/, /\bawv\b/]),
     appointmentTypeCount: appointmentCounts.length,
+    dosCount: dosCounts.length,
     insurancePlanCount: insuranceCounts.length,
   };
 }
@@ -326,23 +395,31 @@ function normalizeProcessedSnapshot(snapshot) {
     return null;
   }
 
-  const cleanedRows = snapshot.cleanedRows;
+  const normalizedRows = snapshot.cleanedRows.map((row) => ({
+    ...row,
+    __dos: normalizeDosValue(row.__dos),
+  }));
   const appointmentCounts = Array.isArray(snapshot.appointmentCounts)
     ? snapshot.appointmentCounts
-    : buildCounts(cleanedRows, "appttype");
+    : buildCounts(normalizedRows, "appttype");
   const insuranceCounts = Array.isArray(snapshot.insuranceCounts)
     ? snapshot.insuranceCounts
-    : buildCounts(cleanedRows, "appt ins pkg name");
+    : buildCounts(normalizedRows, "appt ins pkg name");
+  const dosCounts = Array.isArray(snapshot.dosCounts)
+    ? snapshot.dosCounts
+    : buildDosCounts(normalizedRows);
 
   return {
     ...snapshot,
-    sourceRowsRead: Number(snapshot.sourceRowsRead) || cleanedRows.length,
+    sourceRowsRead: Number(snapshot.sourceRowsRead) || normalizedRows.length,
     duplicatesRemoved: Number(snapshot.duplicatesRemoved) || 0,
     cancelledRemoved: Number(snapshot.cancelledRemoved) || 0,
-    cleanedRows,
+    selfPayRemoved: Number(snapshot.selfPayRemoved) || 0,
+    cleanedRows: normalizedRows,
     appointmentCounts,
     insuranceCounts,
-    summary: buildSummary(cleanedRows, appointmentCounts, insuranceCounts),
+    dosCounts,
+    summary: buildSummary(normalizedRows, appointmentCounts, insuranceCounts, dosCounts),
   };
 }
 
@@ -366,6 +443,7 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
   const seenKeys = new Set();
   let duplicatesRemoved = 0;
   let cancelledRemoved = 0;
+  let selfPayRemoved = 0;
   let sourceRowsRead = 0;
 
   for (const sourceRow of rows.slice(2)) {
@@ -381,6 +459,11 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
       cleanedRow[columnName] = normalizeDisplay(sourceRow[indexes[columnName]]);
     }
 
+    if (isSelfPayPlaceholder(cleanedRow)) {
+      selfPayRemoved += 1;
+      continue;
+    }
+
     const statusValue = statusIndex >= 0 ? normalizeDisplay(sourceRow[statusIndex]) : "";
     if (looksCancelled(statusValue) || looksCancelled(cleanedRow.appttype)) {
       cancelledRemoved += 1;
@@ -388,6 +471,7 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
     }
 
     const dosValue = normalizeDisplay(sourceRow[dosIndex]);
+    cleanedRow.__dos = normalizeDosValue(dosValue);
     const dedupeKey = makeDeduplicationKey(cleanedRow, dosValue);
 
     if (dedupeKey && seenKeys.has(dedupeKey)) {
@@ -404,16 +488,19 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
   const sortedRows = sortRowsByPatientName(cleanedRows);
   const appointmentCounts = buildCounts(sortedRows, "appttype");
   const insuranceCounts = buildCounts(sortedRows, "appt ins pkg name");
+  const dosCounts = buildDosCounts(sortedRows);
 
   return {
     fileName,
     sourceRowsRead,
     duplicatesRemoved,
     cancelledRemoved,
+    selfPayRemoved,
     cleanedRows: sortedRows,
     appointmentCounts,
     insuranceCounts,
-    summary: buildSummary(sortedRows, appointmentCounts, insuranceCounts),
+    dosCounts,
+    summary: buildSummary(sortedRows, appointmentCounts, insuranceCounts, dosCounts),
   };
 }
 
@@ -489,11 +576,54 @@ function renderCounts(container, items) {
     .join("");
 }
 
-function renderTable(body, rows) {
+function renderDosFilters(container, dosCounts, selectedDos) {
+  if (!dosCounts.length) {
+    container.innerHTML = '<div class="empty-state-card">No DOS values were found in this file.</div>';
+    return;
+  }
+
+  const buttons = [
+    {
+      value: DOS_ALL_FILTER,
+      label: "All DOS",
+      count: dosCounts.reduce((total, item) => total + item.count, 0),
+    },
+    ...dosCounts.map((item) => ({
+      value: item.label,
+      label: item.label,
+      count: item.count,
+    })),
+  ];
+
+  container.innerHTML = buttons
+    .map(
+      (item) => `
+        <button
+          class="dos-filter-button${selectedDos === item.value ? " is-active" : ""}"
+          type="button"
+          data-dos-filter="${escapeHtml(item.value)}"
+        >
+          ${escapeHtml(item.label)}
+          <span class="dos-filter-meta">(${item.count})</span>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+function filterRowsByDos(rows, selectedDos) {
+  if (!selectedDos || selectedDos === DOS_ALL_FILTER) {
+    return rows;
+  }
+
+  return rows.filter((row) => normalizeDosValue(row.__dos) === selectedDos);
+}
+
+function renderTable(body, rows, emptyMessage = "No patient rows were found after processing this file.") {
   if (!rows.length) {
     body.innerHTML = `
       <tr class="empty-row">
-        <td colspan="7">No patient rows were found after processing this file.</td>
+        <td colspan="7">${escapeHtml(emptyMessage)}</td>
       </tr>
     `;
     return;
@@ -503,7 +633,20 @@ function renderTable(body, rows) {
     .map(
       (row) => `
         <tr>
-          ${OUTPUT_COLUMNS.map((columnName) => `<td>${escapeHtml(row[columnName] ?? "")}</td>`).join("")}
+          ${OUTPUT_COLUMNS.map((columnName) => {
+            if (columnName === "patient name") {
+              return `
+                <td>
+                  <div class="patient-cell">
+                    <span>${escapeHtml(row[columnName] ?? "")}</span>
+                    <span class="dos-badge">DOS: ${escapeHtml(normalizeDosValue(row.__dos))}</span>
+                  </div>
+                </td>
+              `;
+            }
+
+            return `<td>${escapeHtml(row[columnName] ?? "")}</td>`;
+          }).join("")}
         </tr>
       `,
     )
@@ -519,22 +662,40 @@ function updateOverview(summaryElements, processedData) {
   summaryElements.totalAppointments.textContent = String(processedData.summary.totalAppointments);
   summaryElements.duplicatesRemoved.textContent = String(processedData.duplicatesRemoved);
   summaryElements.cancelledRemoved.textContent = String(processedData.cancelledRemoved);
+  summaryElements.selfPayRemoved.textContent = String(processedData.selfPayRemoved);
   summaryElements.newPatientCount.textContent = String(processedData.summary.newPatientCount);
   summaryElements.establishedPatientCount.textContent = String(processedData.summary.establishedPatientCount);
   summaryElements.wellnessExamCount.textContent = String(processedData.summary.wellnessExamCount);
   summaryElements.appointmentTypeCount.textContent = String(processedData.summary.appointmentTypeCount);
+  summaryElements.dosCount.textContent = String(processedData.summary.dosCount);
   summaryElements.insurancePlanCount.textContent = String(processedData.summary.insurancePlanCount);
 }
 
 function downloadCleanedCsv(processedData) {
-  const csv = toCsv(processedData.cleanedRows);
+  downloadRowsCsv(processedData.cleanedRows, processedData.fileName, "cleaned");
+}
+
+function buildCsvFileName(fileName, suffix) {
+  const baseName = fileName.replace(/\.[^.]+$/, "") || "scheduled-patients";
+  const safeSuffix = String(suffix ?? "cleaned")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+
+  return `${baseName}-${safeSuffix || "cleaned"}.csv`;
+}
+
+function downloadRowsCsv(rows, fileName, suffix) {
+  const csv = toCsv(rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const baseName = processedData.fileName.replace(/\.[^.]+$/, "") || "scheduled-patients";
 
   link.href = url;
-  link.download = `${baseName}-cleaned.csv`;
+  link.download = buildCsvFileName(fileName, suffix);
   document.body.append(link);
   link.click();
   link.remove();
@@ -547,12 +708,18 @@ function initApp() {
     uploadButton: document.querySelector("#uploadButton"),
     processButton: document.querySelector("#processButton"),
     downloadButton: document.querySelector("#downloadButton"),
+    downloadDosButton: document.querySelector("#downloadDosButton"),
     clearMemoryButton: document.querySelector("#clearMemoryButton"),
     fileMeta: document.querySelector("#fileMeta"),
     statusMessage: document.querySelector("#statusMessage"),
     memoryBadge: document.querySelector("#memoryBadge"),
+    dosFilters: document.querySelector("#dosFilters"),
+    dosCounts: document.querySelector("#dosCounts"),
+    dosSelectionSummary: document.querySelector("#dosSelectionSummary"),
     appointmentCounts: document.querySelector("#appointmentCounts"),
     insuranceCounts: document.querySelector("#insuranceCounts"),
+    insuranceCountsWrap: document.querySelector("#insuranceCountsWrap"),
+    insuranceToggleButton: document.querySelector("#insuranceToggleButton"),
     resultsBody: document.querySelector("#resultsBody"),
     tableSummary: document.querySelector("#tableSummary"),
   };
@@ -561,35 +728,95 @@ function initApp() {
     totalAppointments: document.querySelector("#totalAppointments"),
     duplicatesRemoved: document.querySelector("#duplicatesRemoved"),
     cancelledRemoved: document.querySelector("#cancelledRemoved"),
+    selfPayRemoved: document.querySelector("#selfPayRemoved"),
     newPatientCount: document.querySelector("#newPatientCount"),
     establishedPatientCount: document.querySelector("#establishedPatientCount"),
     wellnessExamCount: document.querySelector("#wellnessExamCount"),
     appointmentTypeCount: document.querySelector("#appointmentTypeCount"),
+    dosCount: document.querySelector("#dosCount"),
     insurancePlanCount: document.querySelector("#insurancePlanCount"),
   };
 
   const state = {
     selectedFile: null,
     processedData: null,
+    selectedDos: DOS_ALL_FILTER,
   };
 
   function syncButtons() {
     elements.processButton.disabled = !state.selectedFile;
     elements.downloadButton.disabled = !state.processedData;
+    elements.downloadDosButton.disabled = !state.processedData || state.selectedDos === DOS_ALL_FILTER;
     elements.clearMemoryButton.disabled = !loadState();
+  }
+
+  function updateInsuranceToggle(isOpen) {
+    elements.insuranceCountsWrap.hidden = !isOpen;
+    elements.insuranceToggleButton.setAttribute("aria-expanded", String(isOpen));
+    elements.insuranceToggleButton.textContent = isOpen ? "Hide" : "Show";
+  }
+
+  function updateDosDownloadButton() {
+    const hasSpecificDos = Boolean(state.processedData) && state.selectedDos !== DOS_ALL_FILTER;
+    elements.downloadDosButton.disabled = !hasSpecificDos;
+    elements.downloadDosButton.textContent = hasSpecificDos
+      ? `Download ${state.selectedDos} CSV`
+      : "Download Selected DOS";
+  }
+
+  function renderFilteredTableView() {
+    if (!state.processedData) {
+      renderTable(elements.resultsBody, [], "No processed data yet.");
+      elements.tableSummary.textContent = "No processed data yet.";
+      elements.dosSelectionSummary.textContent = "Select a DOS filter to review that day and download only that DOS.";
+      updateDosDownloadButton();
+      return;
+    }
+
+    const filteredRows = filterRowsByDos(state.processedData.cleanedRows, state.selectedDos);
+    renderTable(
+      elements.resultsBody,
+      filteredRows,
+      state.selectedDos === DOS_ALL_FILTER
+        ? "No patient rows were found after processing this file."
+        : `No patient rows match DOS ${state.selectedDos}.`,
+    );
+
+    const dosSummary =
+      state.selectedDos === DOS_ALL_FILTER
+        ? `Showing all ${state.processedData.summary.dosCount} DOS values.`
+        : `Showing patients for DOS ${state.selectedDos}.`;
+
+    elements.tableSummary.textContent =
+      `${filteredRows.length} appointments visible from ${state.processedData.cleanedRows.length} cleaned appointments. Removed ${state.processedData.duplicatesRemoved} duplicates, ${state.processedData.cancelledRemoved} cancelled appointments, and ${state.processedData.selfPayRemoved} self-pay placeholders. ${dosSummary}`;
+
+    elements.dosSelectionSummary.textContent =
+      state.selectedDos === DOS_ALL_FILTER
+        ? `Select a DOS filter to download only that date. ${state.processedData.summary.dosCount} unique DOS values are available.`
+        : `${filteredRows.length} appointments are currently visible for DOS ${state.selectedDos}.`;
+
+    updateDosDownloadButton();
+    syncButtons();
   }
 
   function renderProcessedData(processedData, options = {}) {
     const normalizedData = normalizeProcessedSnapshot(processedData);
     state.processedData = normalizedData;
+    state.selectedDos = options.keepSelectedDos &&
+      normalizedData.dosCounts.some((item) => item.label === state.selectedDos)
+      ? state.selectedDos
+      : DOS_ALL_FILTER;
+
+    renderDosFilters(elements.dosFilters, normalizedData.dosCounts, state.selectedDos);
+    renderCounts(elements.dosCounts, normalizedData.dosCounts);
     renderCounts(elements.appointmentCounts, normalizedData.appointmentCounts);
     renderCounts(elements.insuranceCounts, normalizedData.insuranceCounts);
-    renderTable(elements.resultsBody, normalizedData.cleanedRows);
     updateOverview(summaryElements, normalizedData);
+    renderFilteredTableView();
 
-    const restoredSuffix = options.restoredAt ? ` Restored from memory on ${options.restoredAt}.` : "";
-    elements.tableSummary.textContent =
-      `${normalizedData.cleanedRows.length} cleaned appointments from ${normalizedData.sourceRowsRead} source rows. Removed ${normalizedData.duplicatesRemoved} duplicates and ${normalizedData.cancelledRemoved} cancelled appointments.${restoredSuffix}`;
+    if (options.restoredAt) {
+      elements.tableSummary.textContent += ` Restored from memory on ${options.restoredAt}.`;
+    }
 
     elements.downloadButton.disabled = false;
     elements.clearMemoryButton.disabled = false;
@@ -619,6 +846,17 @@ function initApp() {
     elements.fileMeta.textContent = `${selectedFile.name} selected (${fileSizeKb}).`;
     setStatus(elements.statusMessage, "File selected. Click Process to clean the schedule.", "info");
     syncButtons();
+  });
+
+  elements.dosFilters.addEventListener("click", (event) => {
+    const filterButton = event.target.closest("[data-dos-filter]");
+    if (!filterButton || !state.processedData) {
+      return;
+    }
+
+    state.selectedDos = filterButton.getAttribute("data-dos-filter") || DOS_ALL_FILTER;
+    renderDosFilters(elements.dosFilters, state.processedData.dosCounts, state.selectedDos);
+    renderFilteredTableView();
   });
 
   elements.processButton.addEventListener("click", async () => {
@@ -652,7 +890,7 @@ function initApp() {
 
       setStatus(
         elements.statusMessage,
-        `Success. ${processedData.cleanedRows.length} appointments are ready after removing ${processedData.duplicatesRemoved} duplicates and ${processedData.cancelledRemoved} cancelled rows.`,
+        `Success. ${processedData.cleanedRows.length} appointments are ready after removing ${processedData.duplicatesRemoved} duplicates, ${processedData.cancelledRemoved} cancelled rows, and ${processedData.selfPayRemoved} self-pay placeholders.`,
         "success",
       );
       syncButtons();
@@ -660,6 +898,11 @@ function initApp() {
       const message = error instanceof Error ? error.message : "Something went wrong while processing the CSV.";
       setStatus(elements.statusMessage, message, "error");
     }
+  });
+
+  elements.insuranceToggleButton.addEventListener("click", () => {
+    const isCurrentlyOpen = elements.insuranceToggleButton.getAttribute("aria-expanded") === "true";
+    updateInsuranceToggle(!isCurrentlyOpen);
   });
 
   elements.downloadButton.addEventListener("click", () => {
@@ -670,6 +913,22 @@ function initApp() {
 
     downloadCleanedCsv(state.processedData);
     setStatus(elements.statusMessage, "Your cleaned CSV download has started.", "success");
+  });
+
+  elements.downloadDosButton.addEventListener("click", () => {
+    if (!state.processedData || state.selectedDos === DOS_ALL_FILTER) {
+      setStatus(elements.statusMessage, "Select a specific DOS before downloading that day's CSV.", "error");
+      return;
+    }
+
+    const selectedRows = filterRowsByDos(state.processedData.cleanedRows, state.selectedDos);
+    if (!selectedRows.length) {
+      setStatus(elements.statusMessage, `No appointments are available for DOS ${state.selectedDos}.`, "error");
+      return;
+    }
+
+    downloadRowsCsv(selectedRows, state.processedData.fileName, `dos-${state.selectedDos}`);
+    setStatus(elements.statusMessage, `Your CSV download for DOS ${state.selectedDos} has started.`, "success");
   });
 
   elements.clearMemoryButton.addEventListener("click", () => {
@@ -691,6 +950,7 @@ function initApp() {
     );
   }
 
+  updateInsuranceToggle(true);
   syncButtons();
 }
 
@@ -703,8 +963,13 @@ if (typeof document !== "undefined") {
 }
 
 globalThis.PatientScheduleAssistant = {
+  DOS_ALL_FILTER,
+  DOS_EMPTY_LABEL,
   OUTPUT_COLUMNS,
   buildCounts,
+  buildDosCounts,
+  filterRowsByDos,
+  isSelfPayPlaceholder,
   normalizeHeader,
   normalizeProcessedSnapshot,
   parseCsv,
