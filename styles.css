@@ -271,6 +271,130 @@ body::before {
   margin-top: 14px;
 }
 
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+}
+
+.mapping-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mapping-label {
+  color: var(--accent-deep);
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.mapping-select {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(168, 124, 64, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease;
+}
+
+.mapping-select:hover:not(:disabled) {
+  border-color: rgba(168, 124, 64, 0.28);
+}
+
+.mapping-select:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+}
+
+.mapping-select:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
+.mapping-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.mapping-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 124, 64, 0.14);
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mapping-check input {
+  accent-color: var(--accent-strong);
+}
+
+.detected-columns {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(168, 124, 64, 0.14);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 238, 222, 0.9)),
+    var(--panel-strong);
+}
+
+.detected-columns-summary {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+.detected-columns-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.detected-column-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 124, 64, 0.14);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--text);
+  box-shadow: 0 8px 18px rgba(122, 88, 38, 0.07);
+}
+
+.detected-column-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(239, 224, 191, 0.75);
+  color: var(--accent-deep);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
 .button,
 .link-button {
   cursor: pointer;

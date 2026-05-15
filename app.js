@@ -16,14 +16,16 @@ const OUTPUT_COLUMNS = [
 ];
 
 const HEADER_ALIASES = {
-  patientid: ["patientid", "patient id"],
-  "patient name": ["patient name", "patientname", "full name"],
+  patientid: ["patientid", "patient id", "pt id", "chart id", "chart number"],
+  "patient name": ["patient name", "patientname", "full name", "name", "pt name"],
   "appt ins pkg name": [
     "appt ins pkg name",
     "appointment insurance package name",
     "appt insurance package name",
     "insurance package name",
     "ins pkg name",
+    "insurance name",
+    "payer name",
   ],
   "appt policyidnumber": [
     "appt policyidnumber",
@@ -31,15 +33,20 @@ const HEADER_ALIASES = {
     "appointment policy id number",
     "policy id number",
     "policyidnumber",
+    "member id",
+    "subscriber id",
   ],
-  patientdob: ["patientdob", "patient dob", "dob", "date of birth"],
-  appttype: ["appttype", "appt type", "appointment type"],
+  patientdob: ["patientdob", "patient dob", "dob", "date of birth", "birth date"],
+  appttype: ["appttype", "appt type", "appointment type", "visit type", "appt reason"],
   "svc dprtmnt": [
     "svc dprtmnt",
     "svc department",
     "service department",
     "service dprtmnt",
     "department",
+    "dept",
+    "location",
+    "location department",
   ],
 };
 
@@ -51,6 +58,7 @@ const DOS_HEADER_ALIASES = [
   "appointment date",
   "appointmentdate",
   "scheduled date",
+  "service date",
 ];
 
 const STATUS_HEADER_ALIASES = [
@@ -61,6 +69,73 @@ const STATUS_HEADER_ALIASES = [
   "appointmentstatus",
   "appt state",
   "appointment state",
+  "visit status",
+];
+
+const MAPPING_FIELD_DEFINITIONS = [
+  {
+    key: "patientid",
+    label: "patientid",
+    selector: "#map-patientid",
+    aliases: HEADER_ALIASES.patientid,
+    kind: "output",
+  },
+  {
+    key: "patient name",
+    label: "patient name",
+    selector: "#map-patient-name",
+    aliases: HEADER_ALIASES["patient name"],
+    kind: "output",
+  },
+  {
+    key: "appt ins pkg name",
+    label: "appt ins pkg name",
+    selector: "#map-appt-ins-pkg-name",
+    aliases: HEADER_ALIASES["appt ins pkg name"],
+    kind: "output",
+  },
+  {
+    key: "appt policyidnumber",
+    label: "appt policyidnumber",
+    selector: "#map-appt-policyidnumber",
+    aliases: HEADER_ALIASES["appt policyidnumber"],
+    kind: "output",
+  },
+  {
+    key: "patientdob",
+    label: "patientdob",
+    selector: "#map-patientdob",
+    aliases: HEADER_ALIASES.patientdob,
+    kind: "output",
+  },
+  {
+    key: "appttype",
+    label: "appttype",
+    selector: "#map-appttype",
+    aliases: HEADER_ALIASES.appttype,
+    kind: "output",
+  },
+  {
+    key: "svc dprtmnt",
+    label: "svc dprtmnt",
+    selector: "#map-svc-dprtmnt",
+    aliases: HEADER_ALIASES["svc dprtmnt"],
+    kind: "output",
+  },
+  {
+    key: "dos",
+    label: "DOS / appointment date",
+    selector: "#map-dos",
+    aliases: DOS_HEADER_ALIASES,
+    kind: "meta",
+  },
+  {
+    key: "status",
+    label: "Appointment status",
+    selector: "#map-status",
+    aliases: STATUS_HEADER_ALIASES,
+    kind: "meta",
+  },
 ];
 
 const HTML_ESCAPE_MAP = {
@@ -70,6 +145,12 @@ const HTML_ESCAPE_MAP = {
   '"': "&quot;",
   "'": "&#39;",
 };
+
+const HEADER_KEYWORDS = new Set(
+  [...OUTPUT_COLUMNS, ...DOS_HEADER_ALIASES, ...STATUS_HEADER_ALIASES]
+    .flatMap((value) => (HEADER_ALIASES[value] ? HEADER_ALIASES[value] : [value]))
+    .map((value) => normalizeHeader(value)),
+);
 
 function normalizeHeader(value) {
   return String(value ?? "")
@@ -91,6 +172,42 @@ function normalizeDosValue(value) {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => HTML_ESCAPE_MAP[character]);
+}
+
+function normalizeColumnIndexChoice(value) {
+  if (value === "" || value === null || typeof value === "undefined") {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  return Number.isInteger(numericValue) && numericValue >= 0 ? numericValue : null;
+}
+
+function normalizeMappingIndexes(mappingLike = {}) {
+  const normalized = {};
+
+  for (const field of MAPPING_FIELD_DEFINITIONS) {
+    normalized[field.key] = normalizeColumnIndexChoice(mappingLike[field.key]);
+  }
+
+  return normalized;
+}
+
+function normalizeProcessingMeta(meta, rows = []) {
+  const hasKnownDosValues = rows.some((row) => normalizeDosValue(row.__dos) !== DOS_EMPTY_LABEL);
+
+  return {
+    headerRowIndex: Number.isInteger(meta?.headerRowIndex) ? meta.headerRowIndex : 1,
+    hasDosMapping: typeof meta?.hasDosMapping === "boolean" ? meta.hasDosMapping : hasKnownDosValues,
+    hasStatusMapping: Boolean(meta?.hasStatusMapping),
+    removeDuplicates: meta?.removeDuplicates !== false,
+    removeCancelled: meta?.removeCancelled !== false,
+    removeSelfPay: meta?.removeSelfPay !== false,
+    mapping: normalizeMappingIndexes(meta?.mapping),
+    detectedColumns: Array.isArray(meta?.detectedColumns)
+      ? meta.detectedColumns.map((header) => normalizeDisplay(header))
+      : [],
+  };
 }
 
 function parseCsv(csvText) {
@@ -159,74 +276,207 @@ function findHeaderIndex(headerLookup, candidates) {
   return -1;
 }
 
-function resolveDosIndex(headerLookup) {
+function resolveDosIndex(headerLookup, columns = []) {
   const directMatch = findHeaderIndex(headerLookup, DOS_HEADER_ALIASES);
   if (directMatch >= 0) {
     return directMatch;
   }
 
-  for (const [headerName, index] of headerLookup.entries()) {
+  for (const column of columns) {
+    const headerName = column.normalizedHeader;
     const looksLikeDos =
-      (headerName.includes("appt") || headerName.includes("appointment")) &&
-      headerName.includes("date");
+      headerName.includes("date") &&
+      (headerName.includes("service") || headerName.includes("appt") || headerName.includes("appointment"));
 
     if (looksLikeDos) {
-      return index;
+      return column.index;
     }
   }
 
   return -1;
 }
 
-function resolveStatusIndex(headerLookup) {
+function resolveStatusIndex(headerLookup, columns = []) {
   const directMatch = findHeaderIndex(headerLookup, STATUS_HEADER_ALIASES);
   if (directMatch >= 0) {
     return directMatch;
   }
 
-  for (const [headerName, index] of headerLookup.entries()) {
+  for (const column of columns) {
+    const headerName = column.normalizedHeader;
     if (headerName.includes("status") && (headerName.includes("appt") || headerName.includes("appointment"))) {
-      return index;
+      return column.index;
     }
   }
 
   return -1;
 }
 
-function resolveColumnIndexes(headerRow) {
-  const headerLookup = new Map(
-    headerRow.map((header, index) => [normalizeHeader(header), index]),
-  );
+function buildHeaderLookup(columns) {
+  const headerLookup = new Map();
 
-  const indexes = {};
-  const missingColumns = [];
+  for (const column of columns) {
+    if (!headerLookup.has(column.normalizedHeader)) {
+      headerLookup.set(column.normalizedHeader, column.index);
+    }
 
-  for (const outputColumn of OUTPUT_COLUMNS) {
-    const headerIndex = findHeaderIndex(headerLookup, HEADER_ALIASES[outputColumn] ?? [outputColumn]);
-    if (headerIndex === -1) {
-      missingColumns.push(outputColumn);
+    const uniqueNormalizedHeader = normalizeHeader(column.header);
+    if (!headerLookup.has(uniqueNormalizedHeader)) {
+      headerLookup.set(uniqueNormalizedHeader, column.index);
+    }
+  }
+
+  return headerLookup;
+}
+
+function makeUniqueLabel(baseLabel, usedLabels) {
+  const normalizedBase = normalizeHeader(baseLabel) || baseLabel.toLowerCase();
+  const usedCount = usedLabels.get(normalizedBase) || 0;
+  usedLabels.set(normalizedBase, usedCount + 1);
+  return usedCount === 0 ? baseLabel : `${baseLabel} (${usedCount + 1})`;
+}
+
+function previewRow(row) {
+  const visibleCells = row.map((cell) => normalizeDisplay(cell)).filter(Boolean).slice(0, 5);
+  if (!visibleCells.length) {
+    return "(blank row)";
+  }
+
+  const preview = visibleCells.join(" | ");
+  return preview.length > 96 ? `${preview.slice(0, 93)}...` : preview;
+}
+
+function buildHeaderRowChoices(rawRows) {
+  const choiceLimit = Math.min(rawRows.length, 30);
+
+  return Array.from({ length: choiceLimit }, (_, index) => ({
+    index,
+    label: `Row ${index + 1}: ${previewRow(rawRows[index] ?? [])}`,
+  }));
+}
+
+function guessHeaderRowIndex(rawRows) {
+  if (!rawRows.length) {
+    return 0;
+  }
+
+  if (normalizeHeader(rawRows[0]?.[0]) === REQUIRED_REPORT_NAME && rawRows.length > 1) {
+    return 1;
+  }
+
+  let bestIndex = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  const searchLimit = Math.min(rawRows.length, 16);
+
+  for (let index = 0; index < searchLimit; index += 1) {
+    const row = rawRows[index] ?? [];
+    const normalizedCells = row.map((cell) => normalizeHeader(cell)).filter(Boolean);
+    const nonEmptyCount = normalizedCells.length;
+
+    if (!nonEmptyCount) {
       continue;
     }
 
-    indexes[outputColumn] = headerIndex;
+    const exactMatches = normalizedCells.filter((cell) => HEADER_KEYWORDS.has(cell)).length;
+    const fuzzyMatches = normalizedCells.filter((cell) =>
+      cell.includes("patient") ||
+      cell.includes("appt") ||
+      cell.includes("appointment") ||
+      cell.includes("policy") ||
+      cell.includes("insurance") ||
+      cell.includes("department") ||
+      cell.includes("status") ||
+      cell.includes("dob") ||
+      cell.includes("date"),
+    ).length;
+
+    let score = exactMatches * 12 + fuzzyMatches * 3 + Math.min(nonEmptyCount, 12) - index * 0.25;
+
+    if (nonEmptyCount === 1) {
+      score -= 8;
+    }
+
+    if (normalizedCells.some((cell) => cell.includes("report name"))) {
+      score -= 12;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
   }
 
-  const dosIndex = resolveDosIndex(headerLookup);
-  if (dosIndex === -1) {
-    missingColumns.push("DOS / appointment date");
+  return bestIndex;
+}
+
+function buildCsvModelFromRows(rawRows, requestedHeaderRowIndex = 0) {
+  if (!rawRows.length) {
+    throw new Error("This file does not contain any readable rows.");
   }
 
-  if (missingColumns.length > 0) {
-    throw new Error(
-      `The CSV is missing required column${missingColumns.length > 1 ? "s" : ""}: ${missingColumns.join(", ")}.`,
-    );
+  const boundedHeaderRowIndex = Math.max(0, Math.min(rawRows.length - 1, Number(requestedHeaderRowIndex) || 0));
+  const maxColumns = rawRows.reduce((largest, row) => Math.max(largest, row.length), 0);
+  const headerSourceRow = rawRows[boundedHeaderRowIndex] ?? [];
+  const usedLabels = new Map();
+  const columns = [];
+
+  for (let index = 0; index < maxColumns; index += 1) {
+    const rawHeader = normalizeDisplay(headerSourceRow[index]);
+    const baseLabel = rawHeader || `Column ${index + 1}`;
+
+    columns.push({
+      index,
+      rawHeader,
+      header: makeUniqueLabel(baseLabel, usedLabels),
+      normalizedHeader: normalizeHeader(rawHeader || `Column ${index + 1}`),
+    });
   }
 
   return {
-    indexes,
-    dosIndex,
-    statusIndex: resolveStatusIndex(headerLookup),
+    rawRows,
+    headerRowIndex: boundedHeaderRowIndex,
+    headerRowChoices: buildHeaderRowChoices(rawRows),
+    columns,
+    dataRows: rawRows.slice(boundedHeaderRowIndex + 1),
   };
+}
+
+function buildCsvModel(csvText, requestedHeaderRowIndex = null) {
+  const rawRows = parseCsv(csvText);
+  if (!rawRows.length) {
+    throw new Error("This file does not contain any readable rows.");
+  }
+
+  const defaultHeaderRowIndex =
+    requestedHeaderRowIndex === null || typeof requestedHeaderRowIndex === "undefined"
+      ? guessHeaderRowIndex(rawRows)
+      : requestedHeaderRowIndex;
+
+  return buildCsvModelFromRows(rawRows, defaultHeaderRowIndex);
+}
+
+function buildAutoMapping(model) {
+  const headerLookup = buildHeaderLookup(model.columns);
+  const mapping = {};
+
+  for (const field of MAPPING_FIELD_DEFINITIONS) {
+    if (field.key === "dos") {
+      const dosIndex = resolveDosIndex(headerLookup, model.columns);
+      mapping[field.key] = dosIndex >= 0 ? dosIndex : null;
+      continue;
+    }
+
+    if (field.key === "status") {
+      const statusIndex = resolveStatusIndex(headerLookup, model.columns);
+      mapping[field.key] = statusIndex >= 0 ? statusIndex : null;
+      continue;
+    }
+
+    const matchIndex = findHeaderIndex(headerLookup, field.aliases);
+    mapping[field.key] = matchIndex >= 0 ? matchIndex : null;
+  }
+
+  return normalizeMappingIndexes(mapping);
 }
 
 function quoteCsvValue(value) {
@@ -247,31 +497,73 @@ function toCsv(rows) {
   return [headerLine, ...dataLines].join("\r\n");
 }
 
-function makeDeduplicationKey(row, dos) {
-  const preferredPatientKey = normalizeDisplay(row.patientid) || [
+function getCellValue(sourceRow, columnIndex) {
+  if (!Number.isInteger(columnIndex) || columnIndex < 0) {
+    return "";
+  }
+
+  return normalizeDisplay(sourceRow[columnIndex]);
+}
+
+function isMeaningfulSourceRow(sourceRow, relevantIndexes) {
+  if (!relevantIndexes.length) {
+    return sourceRow.some((cell) => normalizeDisplay(cell) !== "");
+  }
+
+  return relevantIndexes.some((index) => getCellValue(sourceRow, index) !== "");
+}
+
+function makePatientIdentityKey(row) {
+  const patientId = normalizeDisplay(row.patientid);
+  if (patientId) {
+    return patientId.toLowerCase();
+  }
+
+  const nameAndDob = [normalizeDisplay(row["patient name"]), normalizeDisplay(row.patientdob)]
+    .filter(Boolean)
+    .join("|");
+  if (nameAndDob) {
+    return nameAndDob.toLowerCase();
+  }
+
+  const fallbackIdentity = [
     normalizeDisplay(row["patient name"]),
-    normalizeDisplay(row.patientdob),
+    normalizeDisplay(row["appt policyidnumber"]),
+    normalizeDisplay(row["appt ins pkg name"]),
+    normalizeDisplay(row.appttype),
+    normalizeDisplay(row["svc dprtmnt"]),
   ]
     .filter(Boolean)
     .join("|");
 
-  if (!preferredPatientKey || !normalizeDisplay(dos)) {
+  return fallbackIdentity.toLowerCase();
+}
+
+function makeDeduplicationKey(row, dos, options = {}) {
+  const patientKey = makePatientIdentityKey(row);
+  if (!patientKey) {
     return "";
   }
 
-  return `${preferredPatientKey.toLowerCase()}::${normalizeDisplay(dos).toLowerCase()}`;
+  if (options.includeDos !== false && normalizeDisplay(dos)) {
+    return `${patientKey}::${normalizeDisplay(dos).toLowerCase()}`;
+  }
+
+  return patientKey;
 }
 
 function sortRowsByPatientName(rows) {
   return [...rows].sort((left, right) => {
-    const nameCompare = normalizeDisplay(left["patient name"]).localeCompare(
-      normalizeDisplay(right["patient name"]),
+    const leftName = normalizeDisplay(left["patient name"]);
+    const rightName = normalizeDisplay(right["patient name"]);
+    const primaryCompare = (leftName || normalizeDisplay(left.patientid)).localeCompare(
+      rightName || normalizeDisplay(right.patientid),
       undefined,
       { sensitivity: "base" },
     );
 
-    if (nameCompare !== 0) {
-      return nameCompare;
+    if (primaryCompare !== 0) {
+      return primaryCompare;
     }
 
     return normalizeDisplay(left.patientid).localeCompare(normalizeDisplay(right.patientid), undefined, {
@@ -354,10 +646,12 @@ function buildDosCounts(rows) {
 }
 
 function makeAppointmentComparisonKey(row) {
-  return makeDeduplicationKey(row, row.__dos);
+  const normalizedDos = normalizeDosValue(row.__dos);
+  return makeDeduplicationKey(row, normalizedDos === DOS_EMPTY_LABEL ? "" : normalizedDos);
 }
 
-function buildAddOnInsight(rows, comparisonBase = null) {
+function buildAddOnInsight(rows, comparisonBase = null, meta = {}) {
+  const normalizedMeta = normalizeProcessingMeta(meta, rows);
   const addOnRows = rows.filter((row) => row.__isAddOn);
   const comparisonRows = Array.isArray(comparisonBase?.cleanedRows) ? comparisonBase.cleanedRows : [];
 
@@ -368,13 +662,12 @@ function buildAddOnInsight(rows, comparisonBase = null) {
     baselineCount: comparisonRows.length,
     addOnCount: addOnRows.length,
     regularCount: Math.max(0, rows.length - addOnRows.length),
-    addOnDosCounts: buildDosCounts(addOnRows),
+    addOnDosCounts: normalizedMeta.hasDosMapping ? buildDosCounts(addOnRows) : [],
   };
 }
 
 function looksCancelled(value) {
-  const normalizedValue = normalizeHeader(value);
-  return normalizedValue.includes("cancel");
+  return normalizeHeader(value).includes("cancel");
 }
 
 function isSelfPayPlaceholder(row) {
@@ -394,7 +687,9 @@ function sumMatchingCounts(counts, matchers) {
   }, 0);
 }
 
-function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight) {
+function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight, meta = {}) {
+  const normalizedMeta = normalizeProcessingMeta(meta, cleanedRows);
+
   return {
     totalAppointments: cleanedRows.length,
     newPatientCount: sumMatchingCounts(appointmentCounts, [/\bnew patient\b/, /\bnp\b/]),
@@ -408,8 +703,26 @@ function buildSummary(cleanedRows, appointmentCounts, insuranceCounts, dosCounts
     wellnessExamCount: sumMatchingCounts(appointmentCounts, [/\bwellness\b/, /\bawv\b/]),
     addOnCount: addOnInsight.addOnCount,
     appointmentTypeCount: appointmentCounts.length,
-    dosCount: dosCounts.length,
+    dosCount: normalizedMeta.hasDosMapping ? dosCounts.length : 0,
     insurancePlanCount: insuranceCounts.length,
+  };
+}
+
+function buildProcessedSnapshot(processedData, comparisonBase = null) {
+  const normalizedMeta = normalizeProcessingMeta(processedData.meta, processedData.cleanedRows);
+  const appointmentCounts = buildCounts(processedData.cleanedRows, "appttype");
+  const insuranceCounts = buildCounts(processedData.cleanedRows, "appt ins pkg name");
+  const dosCounts = normalizedMeta.hasDosMapping ? buildDosCounts(processedData.cleanedRows) : [];
+  const addOnInsight = buildAddOnInsight(processedData.cleanedRows, comparisonBase, normalizedMeta);
+
+  return {
+    ...processedData,
+    meta: normalizedMeta,
+    appointmentCounts,
+    insuranceCounts,
+    dosCounts,
+    addOnInsight,
+    summary: buildSummary(processedData.cleanedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight, normalizedMeta),
   };
 }
 
@@ -423,57 +736,95 @@ function normalizeProcessedSnapshot(snapshot) {
     __dos: normalizeDosValue(row.__dos),
     __isAddOn: Boolean(row.__isAddOn),
   }));
-  const appointmentCounts = Array.isArray(snapshot.appointmentCounts)
-    ? snapshot.appointmentCounts
-    : buildCounts(normalizedRows, "appttype");
-  const insuranceCounts = Array.isArray(snapshot.insuranceCounts)
-    ? snapshot.insuranceCounts
-    : buildCounts(normalizedRows, "appt ins pkg name");
-  const dosCounts = Array.isArray(snapshot.dosCounts)
-    ? snapshot.dosCounts
-    : buildDosCounts(normalizedRows);
-  const derivedAddOnInsight = buildAddOnInsight(normalizedRows, snapshot.addOnInsight);
-  const addOnInsight = snapshot.addOnInsight && typeof snapshot.addOnInsight === "object"
+  const normalizedMeta = normalizeProcessingMeta(snapshot.meta, normalizedRows);
+  const baseSnapshot = buildProcessedSnapshot(
+    {
+      ...snapshot,
+      sourceRowsRead: Number(snapshot.sourceRowsRead) || normalizedRows.length,
+      duplicatesRemoved: Number(snapshot.duplicatesRemoved) || 0,
+      cancelledRemoved: Number(snapshot.cancelledRemoved) || 0,
+      selfPayRemoved: Number(snapshot.selfPayRemoved) || 0,
+      cleanedRows: normalizedRows,
+      meta: normalizedMeta,
+    },
+  );
+  const restoredAddOnInsight = snapshot.addOnInsight && typeof snapshot.addOnInsight === "object"
     ? {
-      ...derivedAddOnInsight,
-      available: Boolean(snapshot.addOnInsight.available) || derivedAddOnInsight.available,
-      baselineFileName: normalizeDisplay(snapshot.addOnInsight.baselineFileName) || derivedAddOnInsight.baselineFileName,
-      baselineSavedAt: snapshot.addOnInsight.baselineSavedAt || derivedAddOnInsight.baselineSavedAt,
-      baselineCount: Number(snapshot.addOnInsight.baselineCount) || derivedAddOnInsight.baselineCount,
+      ...baseSnapshot.addOnInsight,
+      available: Boolean(snapshot.addOnInsight.available),
+      baselineFileName: normalizeDisplay(snapshot.addOnInsight.baselineFileName),
+      baselineSavedAt: snapshot.addOnInsight.baselineSavedAt || "",
+      baselineCount: Number(snapshot.addOnInsight.baselineCount) || 0,
+      addOnDosCounts: normalizedMeta.hasDosMapping
+        ? Array.isArray(snapshot.addOnInsight.addOnDosCounts)
+          ? snapshot.addOnInsight.addOnDosCounts
+          : baseSnapshot.addOnInsight.addOnDosCounts
+        : [],
     }
-    : derivedAddOnInsight;
+    : baseSnapshot.addOnInsight;
 
   return {
-    ...snapshot,
-    sourceRowsRead: Number(snapshot.sourceRowsRead) || normalizedRows.length,
-    duplicatesRemoved: Number(snapshot.duplicatesRemoved) || 0,
-    cancelledRemoved: Number(snapshot.cancelledRemoved) || 0,
-    selfPayRemoved: Number(snapshot.selfPayRemoved) || 0,
-    cleanedRows: normalizedRows,
-    appointmentCounts,
-    insuranceCounts,
-    dosCounts,
-    addOnInsight,
-    summary: buildSummary(normalizedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight),
+    ...baseSnapshot,
+    addOnInsight: restoredAddOnInsight,
+    summary: buildSummary(
+      baseSnapshot.cleanedRows,
+      baseSnapshot.appointmentCounts,
+      baseSnapshot.insuranceCounts,
+      baseSnapshot.dosCounts,
+      restoredAddOnInsight,
+      normalizedMeta,
+    ),
   };
 }
 
-function processScheduleCsv(csvText, fileName = "schedule.csv") {
-  const rows = parseCsv(csvText);
+function countMappedOutputs(mapping) {
+  return OUTPUT_COLUMNS.filter((columnName) => Number.isInteger(mapping[columnName])).length;
+}
 
-  if (rows.length < 2) {
-    throw new Error("This file does not have enough rows to contain the report name and headers.");
+function hasIdentityMapping(mapping) {
+  return Boolean(
+    Number.isInteger(mapping.patientid) ||
+      Number.isInteger(mapping["patient name"]) ||
+      Number.isInteger(mapping.patientdob) ||
+      Number.isInteger(mapping["appt policyidnumber"]),
+  );
+}
+
+function validateMappingConfig(config) {
+  const mappedOutputCount = countMappedOutputs(config.mapping);
+
+  if (!mappedOutputCount) {
+    return {
+      valid: false,
+      message: "Map at least one output column before processing this report.",
+    };
   }
 
-  const reportCell = normalizeHeader(rows[0][0]);
-  if (reportCell !== REQUIRED_REPORT_NAME) {
-    throw new Error(
-      'This file does not look like an Athena "Scheduled Patients List" export. Cell A1 must be "REPORT NAME : Scheduled Patients List".',
-    );
+  return {
+    valid: true,
+    message: "",
+  };
+}
+
+function processCsvModel(model, config, fileName = "schedule.csv") {
+  const normalizedMapping = normalizeMappingIndexes(config.mapping);
+  const options = {
+    removeDuplicates: config.options?.removeDuplicates !== false,
+    removeCancelled: config.options?.removeCancelled !== false,
+    removeSelfPay: config.options?.removeSelfPay !== false,
+  };
+  const validation = validateMappingConfig({ mapping: normalizedMapping, options });
+
+  if (!validation.valid) {
+    throw new Error(validation.message);
   }
 
-  const headerRow = rows[1];
-  const { indexes, dosIndex, statusIndex } = resolveColumnIndexes(headerRow);
+  const relevantIndexes = [...new Set(
+    MAPPING_FIELD_DEFINITIONS
+      .map((field) => normalizedMapping[field.key])
+      .filter((index) => Number.isInteger(index)),
+  )];
+  const hasDosMapping = Number.isInteger(normalizedMapping.dos);
   const cleanedRows = [];
   const seenKeys = new Set();
   let duplicatesRemoved = 0;
@@ -481,9 +832,8 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
   let selfPayRemoved = 0;
   let sourceRowsRead = 0;
 
-  for (const sourceRow of rows.slice(2)) {
-    const hasContent = sourceRow.some((cell) => normalizeDisplay(cell) !== "");
-    if (!hasContent) {
+  for (const sourceRow of model.dataRows) {
+    if (!isMeaningfulSourceRow(sourceRow, relevantIndexes)) {
       continue;
     }
 
@@ -491,65 +841,114 @@ function processScheduleCsv(csvText, fileName = "schedule.csv") {
 
     const cleanedRow = {};
     for (const columnName of OUTPUT_COLUMNS) {
-      cleanedRow[columnName] = normalizeDisplay(sourceRow[indexes[columnName]]);
+      cleanedRow[columnName] = getCellValue(sourceRow, normalizedMapping[columnName]);
     }
 
-    if (isSelfPayPlaceholder(cleanedRow)) {
+    if (options.removeSelfPay && isSelfPayPlaceholder(cleanedRow)) {
       selfPayRemoved += 1;
       continue;
     }
 
-    const statusValue = statusIndex >= 0 ? normalizeDisplay(sourceRow[statusIndex]) : "";
-    if (looksCancelled(statusValue) || looksCancelled(cleanedRow.appttype)) {
+    const statusValue = getCellValue(sourceRow, normalizedMapping.status);
+    if (options.removeCancelled && (looksCancelled(statusValue) || looksCancelled(cleanedRow.appttype))) {
       cancelledRemoved += 1;
       continue;
     }
 
-    const dosValue = normalizeDisplay(sourceRow[dosIndex]);
-    cleanedRow.__dos = normalizeDosValue(dosValue);
+    const rawDosValue = getCellValue(sourceRow, normalizedMapping.dos);
+    cleanedRow.__dos = hasDosMapping ? normalizeDosValue(rawDosValue) : DOS_EMPTY_LABEL;
     cleanedRow.__isAddOn = false;
-    const dedupeKey = makeDeduplicationKey(cleanedRow, dosValue);
 
-    if (dedupeKey && seenKeys.has(dedupeKey)) {
-      duplicatesRemoved += 1;
-      continue;
+    if (options.removeDuplicates) {
+      const dedupeKey = makeDeduplicationKey(cleanedRow, hasDosMapping ? rawDosValue : "", {
+        includeDos: hasDosMapping,
+      });
+
+      if (dedupeKey && seenKeys.has(dedupeKey)) {
+        duplicatesRemoved += 1;
+        continue;
+      }
+
+      if (dedupeKey) {
+        seenKeys.add(dedupeKey);
+      }
     }
 
-    if (dedupeKey) {
-      seenKeys.add(dedupeKey);
-    }
     cleanedRows.push(cleanedRow);
   }
 
   const sortedRows = sortRowsByPatientName(cleanedRows);
-  const appointmentCounts = buildCounts(sortedRows, "appttype");
-  const insuranceCounts = buildCounts(sortedRows, "appt ins pkg name");
-  const dosCounts = buildDosCounts(sortedRows);
-  const addOnInsight = buildAddOnInsight(sortedRows);
 
-  return {
+  return buildProcessedSnapshot({
     fileName,
     sourceRowsRead,
     duplicatesRemoved,
     cancelledRemoved,
     selfPayRemoved,
     cleanedRows: sortedRows,
-    appointmentCounts,
-    insuranceCounts,
-    dosCounts,
-    addOnInsight,
-    summary: buildSummary(sortedRows, appointmentCounts, insuranceCounts, dosCounts, addOnInsight),
-  };
+    meta: {
+      headerRowIndex: model.headerRowIndex,
+      hasDosMapping,
+      hasStatusMapping: Number.isInteger(normalizedMapping.status),
+      removeDuplicates: options.removeDuplicates,
+      removeCancelled: options.removeCancelled,
+      removeSelfPay: options.removeSelfPay,
+      mapping: normalizedMapping,
+      detectedColumns: model.columns.map((column) => column.header),
+    },
+  });
+}
+
+function processScheduleCsv(csvText, fileName = "schedule.csv") {
+  const rawRows = parseCsv(csvText);
+
+  if (rawRows.length < 2) {
+    throw new Error("This file does not have enough rows to detect headers and patient rows.");
+  }
+
+  if (normalizeHeader(rawRows[0]?.[0]) === REQUIRED_REPORT_NAME) {
+    const athenaModel = buildCsvModelFromRows(rawRows, 1);
+    return processCsvModel(
+      athenaModel,
+      {
+        mapping: buildAutoMapping(athenaModel),
+        options: {
+          removeDuplicates: true,
+          removeCancelled: true,
+          removeSelfPay: true,
+        },
+      },
+      fileName,
+    );
+  }
+
+  const genericModel = buildCsvModelFromRows(rawRows, guessHeaderRowIndex(rawRows));
+  return processCsvModel(
+    genericModel,
+    {
+      mapping: buildAutoMapping(genericModel),
+      options: {
+        removeDuplicates: true,
+        removeCancelled: true,
+        removeSelfPay: true,
+      },
+    },
+    fileName,
+  );
 }
 
 function applyAddOnComparison(processedData, comparisonBase = null) {
   const hasComparisonBase = Array.isArray(comparisonBase?.cleanedRows);
   const comparisonKeys = new Set(
     hasComparisonBase
-      ? comparisonBase.cleanedRows.map((row) => makeAppointmentComparisonKey({
-        ...row,
-        __dos: normalizeDosValue(row.__dos),
-      })).filter(Boolean)
+      ? comparisonBase.cleanedRows
+        .map((row) =>
+          makeAppointmentComparisonKey({
+            ...row,
+            __dos: normalizeDosValue(row.__dos),
+          }),
+        )
+        .filter(Boolean)
       : [],
   );
 
@@ -568,20 +967,13 @@ function applyAddOnComparison(processedData, comparisonBase = null) {
     };
   });
 
-  const addOnInsight = buildAddOnInsight(comparedRows, comparisonBase);
-
-  return {
-    ...processedData,
-    cleanedRows: comparedRows,
-    addOnInsight,
-    summary: buildSummary(
-      comparedRows,
-      processedData.appointmentCounts,
-      processedData.insuranceCounts,
-      processedData.dosCounts,
-      addOnInsight,
-    ),
-  };
+  return buildProcessedSnapshot(
+    {
+      ...processedData,
+      cleanedRows: comparedRows,
+    },
+    comparisonBase,
+  );
 }
 
 function saveState(snapshot) {
@@ -656,7 +1048,14 @@ function renderCounts(container, items) {
     .join("");
 }
 
-function renderDosFilters(container, dosCounts, selectedDos) {
+function renderDosFilters(container, dosCounts, selectedDos, meta = {}) {
+  const normalizedMeta = normalizeProcessingMeta(meta);
+
+  if (!normalizedMeta.hasDosMapping) {
+    container.innerHTML = '<div class="empty-state-card">Map a DOS or appointment date column to filter the schedule by date.</div>';
+    return;
+  }
+
   if (!dosCounts.length) {
     container.innerHTML = '<div class="empty-state-card">No DOS values were found in this file.</div>';
     return;
@@ -755,7 +1154,11 @@ function filterRowsByAddOn(rows, selectedAddOnFilter) {
   return rows;
 }
 
-function renderTable(body, rows, emptyMessage = "No patient rows were found after processing this file.") {
+function renderTable(body, rows, options = {}) {
+  const emptyMessage = options.emptyMessage || "No patient rows were found after processing this file.";
+  const showDosBadge = options.showDosBadge !== false;
+  const showAddOnBadge = options.showAddOnBadge !== false;
+
   if (!rows.length) {
     body.innerHTML = `
       <tr class="empty-row">
@@ -775,8 +1178,8 @@ function renderTable(body, rows, emptyMessage = "No patient rows were found afte
                 <td>
                   <div class="patient-cell">
                     <span>${escapeHtml(row[columnName] ?? "")}</span>
-                    <span class="dos-badge">DOS: ${escapeHtml(normalizeDosValue(row.__dos))}</span>
-                    ${row.__isAddOn ? `<span class="dos-badge">New Since Last Upload</span>` : ""}
+                    ${showDosBadge ? `<span class="dos-badge">DOS: ${escapeHtml(normalizeDosValue(row.__dos))}</span>` : ""}
+                    ${showAddOnBadge && row.__isAddOn ? '<span class="dos-badge">New Since Last Upload</span>' : ""}
                   </div>
                 </td>
               `;
@@ -801,7 +1204,7 @@ function renderAddOnStatus(statusElement, processedData) {
   if (!addOnInsight.available) {
     setStatus(
       statusElement,
-      "This is your first saved upload in the comparison cycle. Upload the same DOS sheet again later and the tool will flag newly added patients as add-ons.",
+      "This is your first saved upload in the comparison cycle. Upload the same sheet again later and the tool will flag newly added patients as add-ons.",
       "info",
     );
     return;
@@ -817,6 +1220,11 @@ function renderAddOnStatus(statusElement, processedData) {
 }
 
 function renderAddOnDosCounts(container, processedData) {
+  if (!processedData.meta.hasDosMapping) {
+    container.innerHTML = '<div class="empty-state-card">Map a DOS column to see add-on counts by date.</div>';
+    return;
+  }
+
   if (!processedData.addOnInsight.available) {
     container.innerHTML = '<div class="empty-state-card">Add-on counts by DOS will appear here after a later upload is compared.</div>';
     return;
@@ -875,6 +1283,124 @@ function downloadRowsCsv(rows, fileName, suffix) {
   URL.revokeObjectURL(url);
 }
 
+function populateHeaderRowSelect(selectElement, choices, selectedIndex) {
+  selectElement.innerHTML = choices
+    .map(
+      (choice) => `
+        <option value="${choice.index}"${choice.index === selectedIndex ? " selected" : ""}>
+          ${escapeHtml(choice.label)}
+        </option>
+      `,
+    )
+    .join("");
+}
+
+function populateMappingSelect(selectElement, columns, selectedIndex, optionalLabel = "Ignore this field") {
+  const options = [
+    `<option value="">${escapeHtml(optionalLabel)}</option>`,
+    ...columns.map(
+      (column) => `
+        <option value="${column.index}"${column.index === selectedIndex ? " selected" : ""}>
+          ${escapeHtml(`Column ${column.index + 1} - ${column.header}`)}
+        </option>
+      `,
+    ),
+  ];
+
+  selectElement.innerHTML = options.join("");
+}
+
+function setMappingControlsEnabled(elements, isEnabled) {
+  elements.headerRowSelect.disabled = !isEnabled;
+
+  for (const field of MAPPING_FIELD_DEFINITIONS) {
+    elements.mappingSelects[field.key].disabled = !isEnabled;
+  }
+
+  elements.removeDuplicatesOption.disabled = !isEnabled;
+  elements.removeCancelledOption.disabled = !isEnabled;
+  elements.removeSelfPayOption.disabled = !isEnabled;
+}
+
+function renderDetectedColumns(container, model) {
+  if (!model) {
+    container.innerHTML = "Upload a file to review the detected columns and mapping options.";
+    return;
+  }
+
+  const summary = `
+    <p class="detected-columns-summary">
+      ${model.columns.length} columns detected using row ${model.headerRowIndex + 1} as the header row.
+      ${model.dataRows.length} patient/data row${model.dataRows.length === 1 ? "" : "s"} are available below it.
+    </p>
+  `;
+  const pills = `
+    <div class="detected-columns-list">
+      ${model.columns
+        .map(
+          (column) => `
+            <span class="detected-column-pill">
+              <span class="detected-column-index">C${column.index + 1}</span>
+              <span>${escapeHtml(column.header)}</span>
+            </span>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+
+  container.innerHTML = `${summary}${pills}`;
+}
+
+function readMappingConfig(elements) {
+  const mapping = {};
+
+  for (const field of MAPPING_FIELD_DEFINITIONS) {
+    mapping[field.key] = normalizeColumnIndexChoice(elements.mappingSelects[field.key].value);
+  }
+
+  return {
+    mapping: normalizeMappingIndexes(mapping),
+    options: {
+      removeDuplicates: elements.removeDuplicatesOption.checked,
+      removeCancelled: elements.removeCancelledOption.checked,
+      removeSelfPay: elements.removeSelfPayOption.checked,
+    },
+  };
+}
+
+function buildMappingMessage(config) {
+  const validation = validateMappingConfig(config);
+  if (!validation.valid) {
+    return {
+      tone: "error",
+      message: validation.message,
+    };
+  }
+
+  const details = [];
+
+  if (!Number.isInteger(config.mapping.dos)) {
+    details.push("DOS filters and DOS-only downloads will stay hidden until you map a date column.");
+  }
+
+  if (config.options.removeCancelled &&
+    !Number.isInteger(config.mapping.status) &&
+    !Number.isInteger(config.mapping.appttype)
+  ) {
+    details.push("Cancelled appointment removal may be limited because no status or appointment type column is mapped.");
+  }
+
+  if (config.options.removeDuplicates && !hasIdentityMapping(config.mapping)) {
+    details.push("Duplicate removal will use the available mapped output fields because patient ID and patient name are not mapped.");
+  }
+
+  return {
+    tone: "info",
+    message: `Mapping ready. ${countMappedOutputs(config.mapping)} output column${countMappedOutputs(config.mapping) === 1 ? "" : "s"} mapped. Click Process to apply this setup.${details.length ? ` ${details.join(" ")}` : ""}`,
+  };
+}
+
 function initApp() {
   const elements = {
     csvFileInput: document.querySelector("#csvFileInput"),
@@ -886,6 +1412,11 @@ function initApp() {
     fileMeta: document.querySelector("#fileMeta"),
     statusMessage: document.querySelector("#statusMessage"),
     memoryBadge: document.querySelector("#memoryBadge"),
+    headerRowSelect: document.querySelector("#headerRowSelect"),
+    detectedColumns: document.querySelector("#detectedColumns"),
+    removeDuplicatesOption: document.querySelector("#removeDuplicatesOption"),
+    removeCancelledOption: document.querySelector("#removeCancelledOption"),
+    removeSelfPayOption: document.querySelector("#removeSelfPayOption"),
     dosFilters: document.querySelector("#dosFilters"),
     addOnStatus: document.querySelector("#addOnStatus"),
     addOnFilters: document.querySelector("#addOnFilters"),
@@ -899,6 +1430,10 @@ function initApp() {
     resultsBody: document.querySelector("#resultsBody"),
     tableSummary: document.querySelector("#tableSummary"),
   };
+
+  elements.mappingSelects = Object.fromEntries(
+    MAPPING_FIELD_DEFINITIONS.map((field) => [field.key, document.querySelector(field.selector)]),
+  );
 
   const summaryElements = {
     totalAppointments: document.querySelector("#totalAppointments"),
@@ -916,9 +1451,12 @@ function initApp() {
 
   const state = {
     selectedFile: null,
+    csvModel: null,
+    rawRows: [],
     processedData: null,
     selectedDos: DOS_ALL_FILTER,
     selectedAddOnFilter: ADD_ON_FILTER_ALL,
+    pendingReadId: 0,
   };
 
   function getCurrentVisibleRows() {
@@ -933,10 +1471,14 @@ function initApp() {
   }
 
   function syncButtons() {
-    elements.processButton.disabled = !state.selectedFile;
+    const mappingConfig = readMappingConfig(elements);
+    const mappingValid = state.csvModel ? validateMappingConfig(mappingConfig).valid : false;
+
+    elements.processButton.disabled = !state.selectedFile || !state.csvModel || !mappingValid;
     elements.downloadButton.disabled = !state.processedData;
     elements.downloadDosButton.disabled =
       !state.processedData ||
+      !state.processedData.meta.hasDosMapping ||
       state.selectedDos === DOS_ALL_FILTER ||
       getCurrentVisibleRows().length === 0;
     elements.clearMemoryButton.disabled = !loadState();
@@ -949,7 +1491,10 @@ function initApp() {
   }
 
   function updateDosDownloadButton() {
-    const hasSpecificDos = Boolean(state.processedData) && state.selectedDos !== DOS_ALL_FILTER;
+    const hasSpecificDos = Boolean(state.processedData) &&
+      state.processedData.meta.hasDosMapping &&
+      state.selectedDos !== DOS_ALL_FILTER;
+
     elements.downloadDosButton.disabled = !hasSpecificDos;
     if (!hasSpecificDos) {
       elements.downloadDosButton.textContent = "Download Selected DOS";
@@ -967,7 +1512,7 @@ function initApp() {
 
   function renderFilteredTableView() {
     if (!state.processedData) {
-      renderTable(elements.resultsBody, [], "No processed data yet.");
+      renderTable(elements.resultsBody, [], { emptyMessage: "No processed data yet." });
       elements.tableSummary.textContent = "No processed data yet.";
       elements.dosSelectionSummary.textContent = "Select a DOS filter to review that day and download only that DOS.";
       updateDosDownloadButton();
@@ -975,20 +1520,23 @@ function initApp() {
     }
 
     const filteredRows = getCurrentVisibleRows();
-    renderTable(
-      elements.resultsBody,
-      filteredRows,
-      state.selectedDos === DOS_ALL_FILTER
-        ? state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
-          ? "No new add-ons were found after comparing this upload."
-          : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
-            ? "No previously seen appointments were found after comparing this upload."
-            : "No patient rows were found after processing this file."
-        : `No patient rows match the current filters for DOS ${state.selectedDos}.`,
-    );
+    const hasDosMapping = state.processedData.meta.hasDosMapping;
 
-    const dosSummary =
-      state.selectedDos === DOS_ALL_FILTER
+    renderTable(elements.resultsBody, filteredRows, {
+      emptyMessage:
+        state.selectedDos === DOS_ALL_FILTER
+          ? state.selectedAddOnFilter === ADD_ON_FILTER_ONLY
+            ? "No new add-ons were found after comparing this upload."
+            : state.selectedAddOnFilter === ADD_ON_FILTER_REGULAR
+              ? "No previously seen appointments were found after comparing this upload."
+              : "No patient rows were found after processing this file."
+          : `No patient rows match the current filters for DOS ${state.selectedDos}.`,
+      showDosBadge: hasDosMapping,
+    });
+
+    const dosSummary = !hasDosMapping
+      ? "No DOS column is mapped for this upload."
+      : state.selectedDos === DOS_ALL_FILTER
         ? `Showing all ${state.processedData.summary.dosCount} DOS values.`
         : `Showing patients for DOS ${state.selectedDos}.`;
     const addOnSummary =
@@ -1001,8 +1549,9 @@ function initApp() {
     elements.tableSummary.textContent =
       `${filteredRows.length} appointments visible from ${state.processedData.cleanedRows.length} cleaned appointments. Removed ${state.processedData.duplicatesRemoved} duplicates, ${state.processedData.cancelledRemoved} cancelled appointments, and ${state.processedData.selfPayRemoved} self-pay placeholders. ${dosSummary} ${addOnSummary}`;
 
-    elements.dosSelectionSummary.textContent =
-      !state.processedData.addOnInsight.available
+    elements.dosSelectionSummary.textContent = !hasDosMapping
+      ? "A DOS column was not mapped for this file, so DOS filters and DOS-only downloads are unavailable."
+      : !state.processedData.addOnInsight.available
         ? `Select a DOS filter to download only that date. ${state.processedData.summary.dosCount} unique DOS values are available.`
         : state.selectedDos === DOS_ALL_FILTER
           ? `${state.processedData.addOnInsight.addOnCount} add-ons were found across ${state.processedData.summary.dosCount} DOS values. Select a DOS to download that date.`
@@ -1016,6 +1565,7 @@ function initApp() {
     const normalizedData = normalizeProcessedSnapshot(processedData);
     state.processedData = normalizedData;
     state.selectedDos = options.keepSelectedDos &&
+      normalizedData.meta.hasDosMapping &&
       normalizedData.dosCounts.some((item) => item.label === state.selectedDos)
       ? state.selectedDos
       : DOS_ALL_FILTER;
@@ -1023,10 +1573,14 @@ function initApp() {
       ? state.selectedAddOnFilter
       : ADD_ON_FILTER_ALL;
 
-    renderDosFilters(elements.dosFilters, normalizedData.dosCounts, state.selectedDos);
+    renderDosFilters(elements.dosFilters, normalizedData.dosCounts, state.selectedDos, normalizedData.meta);
     renderAddOnStatus(elements.addOnStatus, normalizedData);
     renderAddOnFilters(elements.addOnFilters, normalizedData.addOnInsight, state.selectedAddOnFilter);
-    renderCounts(elements.dosCounts, normalizedData.dosCounts);
+    if (normalizedData.meta.hasDosMapping) {
+      renderCounts(elements.dosCounts, normalizedData.dosCounts);
+    } else {
+      elements.dosCounts.innerHTML = '<div class="empty-state-card">Map a DOS column to see appointment counts by date.</div>';
+    }
     renderAddOnDosCounts(elements.addOnDosCounts, normalizedData);
     renderCounts(elements.appointmentCounts, normalizedData.appointmentCounts);
     renderCounts(elements.insuranceCounts, normalizedData.insuranceCounts);
@@ -1041,6 +1595,47 @@ function initApp() {
     elements.clearMemoryButton.disabled = false;
   }
 
+  function resetMappingUi() {
+    elements.headerRowSelect.innerHTML = '<option value="">Upload a file first</option>';
+
+    for (const field of MAPPING_FIELD_DEFINITIONS) {
+      populateMappingSelect(elements.mappingSelects[field.key], [], null);
+    }
+
+    renderDetectedColumns(elements.detectedColumns, null);
+    setMappingControlsEnabled(elements, false);
+  }
+
+  function applyModelToUi(model, mapping = buildAutoMapping(model)) {
+    state.csvModel = model;
+    state.rawRows = model.rawRows;
+    populateHeaderRowSelect(elements.headerRowSelect, model.headerRowChoices, model.headerRowIndex);
+
+    for (const field of MAPPING_FIELD_DEFINITIONS) {
+      populateMappingSelect(elements.mappingSelects[field.key], model.columns, mapping[field.key]);
+    }
+
+    renderDetectedColumns(elements.detectedColumns, model);
+    setMappingControlsEnabled(elements, true);
+  }
+
+  function refreshMappingStatus(messageOverride = "") {
+    if (!state.selectedFile || !state.csvModel) {
+      syncButtons();
+      return;
+    }
+
+    if (messageOverride) {
+      setStatus(elements.statusMessage, messageOverride, "info");
+      syncButtons();
+      return;
+    }
+
+    const mappingMessage = buildMappingMessage(readMappingConfig(elements));
+    setStatus(elements.statusMessage, mappingMessage.message, mappingMessage.tone);
+    syncButtons();
+  }
+
   elements.uploadButton.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -1048,33 +1643,79 @@ function initApp() {
     }
   });
 
-  elements.csvFileInput.addEventListener("change", () => {
+  elements.csvFileInput.addEventListener("change", async () => {
     const fileList = elements.csvFileInput.files || [];
     const selectedFile = fileList[0];
     state.selectedFile = selectedFile ?? null;
+    state.csvModel = null;
+    state.rawRows = [];
     elements.memoryBadge.classList.add("hidden");
 
     if (!selectedFile) {
       elements.fileMeta.textContent = "No file selected yet.";
       setStatus(elements.statusMessage, "Choose a CSV file to get started.", "info");
+      resetMappingUi();
       syncButtons();
       return;
     }
 
+    const currentReadId = state.pendingReadId + 1;
+    state.pendingReadId = currentReadId;
     const fileSizeKb = `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`;
     elements.fileMeta.textContent = `${selectedFile.name} selected (${fileSizeKb}).`;
-    setStatus(elements.statusMessage, "File selected. Click Process to clean the schedule.", "info");
+    setStatus(elements.statusMessage, "Reading your file and detecting columns...", "info");
+    resetMappingUi();
     syncButtons();
+
+    try {
+      const fileText = await readFileText(selectedFile);
+      if (state.pendingReadId !== currentReadId) {
+        return;
+      }
+
+      const csvModel = buildCsvModel(fileText);
+      applyModelToUi(csvModel);
+      elements.fileMeta.textContent = `${selectedFile.name} selected (${fileSizeKb}). ${csvModel.columns.length} columns detected.`;
+      refreshMappingStatus();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "This file could not be prepared for processing.";
+      setStatus(elements.statusMessage, message, "error");
+      resetMappingUi();
+      syncButtons();
+    }
+  });
+
+  elements.headerRowSelect.addEventListener("change", () => {
+    if (!state.rawRows.length) {
+      return;
+    }
+
+    const selectedHeaderRowIndex = normalizeColumnIndexChoice(elements.headerRowSelect.value) ?? 0;
+    const updatedModel = buildCsvModelFromRows(state.rawRows, selectedHeaderRowIndex);
+    applyModelToUi(updatedModel);
+    refreshMappingStatus("Header row updated. Review the detected columns and click Process when the mapping looks right.");
+  });
+
+  for (const field of MAPPING_FIELD_DEFINITIONS) {
+    elements.mappingSelects[field.key].addEventListener("change", () => {
+      refreshMappingStatus("Mapping updated. Click Process to apply this setup to the uploaded report.");
+    });
+  }
+
+  [elements.removeDuplicatesOption, elements.removeCancelledOption, elements.removeSelfPayOption].forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      refreshMappingStatus("Processing options updated. Click Process to apply the new settings.");
+    });
   });
 
   elements.dosFilters.addEventListener("click", (event) => {
     const filterButton = event.target.closest("[data-dos-filter]");
-    if (!filterButton || !state.processedData) {
+    if (!filterButton || !state.processedData || !state.processedData.meta.hasDosMapping) {
       return;
     }
 
     state.selectedDos = filterButton.getAttribute("data-dos-filter") || DOS_ALL_FILTER;
-    renderDosFilters(elements.dosFilters, state.processedData.dosCounts, state.selectedDos);
+    renderDosFilters(elements.dosFilters, state.processedData.dosCounts, state.selectedDos, state.processedData.meta);
     renderFilteredTableView();
   });
 
@@ -1089,18 +1730,25 @@ function initApp() {
     renderFilteredTableView();
   });
 
-  elements.processButton.addEventListener("click", async () => {
-    if (!state.selectedFile) {
+  elements.processButton.addEventListener("click", () => {
+    if (!state.selectedFile || !state.csvModel) {
       setStatus(elements.statusMessage, "Please choose a CSV file before processing.", "error");
       return;
     }
 
     try {
+      const mappingConfig = readMappingConfig(elements);
+      const validation = validateMappingConfig(mappingConfig);
+
+      if (!validation.valid) {
+        setStatus(elements.statusMessage, validation.message, "error");
+        return;
+      }
+
       setStatus(elements.statusMessage, "Processing your CSV now...", "info");
-      const fileText = await readFileText(state.selectedFile);
       const comparisonBase = loadState();
       const processedData = applyAddOnComparison(
-        processScheduleCsv(fileText, state.selectedFile.name),
+        processCsvModel(state.csvModel, mappingConfig, state.selectedFile.name),
         comparisonBase,
       );
       const snapshot = {
@@ -1150,14 +1798,14 @@ function initApp() {
   });
 
   elements.downloadDosButton.addEventListener("click", () => {
-    if (!state.processedData || state.selectedDos === DOS_ALL_FILTER) {
+    if (!state.processedData || !state.processedData.meta.hasDosMapping || state.selectedDos === DOS_ALL_FILTER) {
       setStatus(elements.statusMessage, "Select a specific DOS before downloading that day's CSV.", "error");
       return;
     }
 
     const selectedRows = getCurrentVisibleRows();
     if (!selectedRows.length) {
-      setStatus(elements.statusMessage, `No appointments are available for the current DOS and add-on filters.`, "error");
+      setStatus(elements.statusMessage, "No appointments are available for the current DOS and add-on filters.", "error");
       return;
     }
 
@@ -1168,7 +1816,7 @@ function initApp() {
           ? `dos-${state.selectedDos}-previously-seen`
           : `dos-${state.selectedDos}`;
     downloadRowsCsv(selectedRows, state.processedData.fileName, suffix);
-    setStatus(elements.statusMessage, `Your CSV download for the current DOS view has started.`, "success");
+    setStatus(elements.statusMessage, "Your CSV download for the current DOS view has started.", "success");
   });
 
   elements.clearMemoryButton.addEventListener("click", () => {
@@ -1190,6 +1838,7 @@ function initApp() {
     );
   }
 
+  resetMappingUi();
   updateInsuranceToggle(true);
   syncButtons();
 }
@@ -1210,15 +1859,20 @@ globalThis.PatientScheduleAssistant = {
   DOS_EMPTY_LABEL,
   OUTPUT_COLUMNS,
   applyAddOnComparison,
+  buildAutoMapping,
   buildCounts,
   buildAddOnInsight,
+  buildCsvModel,
   buildDosCounts,
   filterRowsByAddOn,
   filterRowsByDos,
+  guessHeaderRowIndex,
   isSelfPayPlaceholder,
   normalizeHeader,
   normalizeProcessedSnapshot,
   parseCsv,
+  processCsvModel,
   processScheduleCsv,
   toCsv,
+  validateMappingConfig,
 };

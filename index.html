@@ -6,7 +6,7 @@
   <title>Patient Schedule Assistant | Help360MD</title>
   <meta
     name="description"
-    content="Upload an Athena Health scheduled patients CSV, clean it, review counts, and download a polished export."
+    content="Upload a patient scheduling CSV, map the columns you need, clean it, review counts, and download a polished export."
   >
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -20,7 +20,7 @@
           <p class="brand-tagline">Empowering Healthcare, Maximizing Revenue</p>
           <h1>Patient Schedule Assistant</h1>
           <p class="hero-text">
-            Upload an Athena Health scheduled patients list, clean duplicate same-day entries,
+            Upload a scheduling CSV, map columns from almost any report layout, clean duplicate entries,
             automatically remove cancelled appointments and empty self-pay placeholders, review every appointment and insurance count,
             and download a ready-to-use CSV.
           </p>
@@ -45,8 +45,7 @@
             <h2>Upload and Process</h2>
           </div>
           <p class="section-copy">
-            Athena CSV files should begin with <strong>REPORT NAME : Scheduled Patients List</strong>
-            in cell A1, with headers on row 2.
+            Upload any CSV report, map the columns you want to use, and decide whether duplicate removal should depend on DOS or just the selected fields.
           </p>
         </div>
 
@@ -66,6 +65,77 @@
 
         <div id="statusMessage" class="status-banner status-info" role="status" aria-live="polite">
           Choose a CSV file to get started.
+        </div>
+      </section>
+
+      <section class="panel counts-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Setup</p>
+            <h2>Column Mapping</h2>
+          </div>
+          <p class="section-copy">
+            The tool auto-detects common Athena columns, but you can remap any report layout before processing.
+          </p>
+        </div>
+        <div class="mapping-grid">
+          <label class="mapping-field">
+            <span class="mapping-label">Header Row</span>
+            <select id="headerRowSelect" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">patientid</span>
+            <select id="map-patientid" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">patient name</span>
+            <select id="map-patient-name" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">appt ins pkg name</span>
+            <select id="map-appt-ins-pkg-name" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">appt policyidnumber</span>
+            <select id="map-appt-policyidnumber" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">patientdob</span>
+            <select id="map-patientdob" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">appttype</span>
+            <select id="map-appttype" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">svc dprtmnt</span>
+            <select id="map-svc-dprtmnt" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">DOS / appointment date</span>
+            <select id="map-dos" class="mapping-select"></select>
+          </label>
+          <label class="mapping-field">
+            <span class="mapping-label">Appointment status</span>
+            <select id="map-status" class="mapping-select"></select>
+          </label>
+        </div>
+        <div class="mapping-options">
+          <label class="mapping-check">
+            <input id="removeDuplicatesOption" type="checkbox" checked>
+            <span>Remove duplicates</span>
+          </label>
+          <label class="mapping-check">
+            <input id="removeCancelledOption" type="checkbox" checked>
+            <span>Remove cancelled appointments</span>
+          </label>
+          <label class="mapping-check">
+            <input id="removeSelfPayOption" type="checkbox" checked>
+            <span>Remove empty self-pay placeholders</span>
+          </label>
+        </div>
+        <div id="detectedColumns" class="detected-columns">
+          Upload a file to review the detected columns and mapping options.
         </div>
       </section>
 
